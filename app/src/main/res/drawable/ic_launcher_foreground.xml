@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 澜阅标识：墨书脊 + 澜水波（108dp 画布，安全区约中心 66dp） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 书脊：墨青圆角竖条 -->
+    <path
+        android:fillColor="#1E3A47"
+        android:pathData="M48,28 h12 a5,5 0 0 1 5,5 v42 a5,5 0 0 1 -5,5 h-12 a5,5 0 0 1 -5,-5 v-42 a5,5 0 0 1 5,-5 z" />
+    <!-- 澜水波：横向三折波线穿过书脊 -->
+    <path
+        android:strokeColor="#3E7C8F"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M28,54 q8,-9 16,0 t16,0 t16,0 t16,0" />
+</vector>
