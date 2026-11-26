@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -390,8 +391,11 @@ fun RssScreen(nav: NavController) {
                     OutlinedTextField(
                         value = input.value,
                         onValueChange = { input.value = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("粘贴订阅源 JSON，或其 URL") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp)
+                            .verticalScroll(rememberScrollState()),
+                        placeholder = { Text("粘贴订阅源 JSON，或其 URL（超长内容可在框内滚动）") },
                         minLines = 3
                     )
                     vm.importMessage?.let {

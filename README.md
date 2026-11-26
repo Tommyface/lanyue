@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.4
+# 澜阅 LanRead v0.4.5
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -31,7 +31,7 @@
 - **阅读主题**：纸 / 宣 / 竹 / 夜
 - **图标**：宣纸底 + 墨青书脊 + 澜水波
 
-## 功能（v0.4.4）
+## 功能（v0.4.5）
 
 1. **书架**：本地 TXT 导入（SAF）、在线书籍收藏、长按移除、阅读进度自动保存
 2. **书源管理**：粘贴 JSON / URL 导入 Legado 书源、启停、删除、按 URL 去重
@@ -77,16 +77,21 @@
    - RssRepository 切 LanJs 全局桥：书源/订阅源共享同一变量存与 cache
    - `source.getVariable()` 修读回 bug（setVariable 写入后可读）
    - 订阅页新增源变量入口：搜索关键词（即 `keys={{source.getVariable()}}`）+ 全局变量增删改
- 13. **发现页封面与书架去重（v0.4.4）**：
-   - 发现页卡片渲染封面（Coil 异步图，无封面/加载失败回退书名首字底纹）
-   - 书架去重：同源+同内容 URL 已在架则不再重复入库（搜索/发现两路均生效）
- 14. **兼容的 Legado 书源规则子集**：
+  13. **发现页封面与书架去重（v0.4.4）**：
+    - 发现页卡片渲染封面（Coil 异步图，无封面/加载失败回退书名首字底纹）
+    - 书架去重：同源+同内容 URL 已在架则不再重复入库（搜索/发现两路均生效）
+  14. **导入体验修复（v0.4.5）**：
+    - 书源/订阅源导入文本框限高 + 框内可滚动：粘贴超长 JSON 不再把导入按钮顶出屏幕
+    - 支持 Legado 标准顶层 `searchUrl` 字段（此前仅读 `ruleSearch.searchUrl`，标准书源搜索会静默失败）
+  15. **兼容的 Legado 书源规则子集**：
    - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
    - `$.` / `@json:` / `[` 开头的 JSONPath
    - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值）
    - `class./tag./id.` 默认语法 + 数字索引 + `@attr`
    - `##regex[##replace]` 净化规则、`&&` 并列、`||` 兜底
-   - 暂不支持：XPath（`//`）、`<js></js>` 标签、对象型规则、POST 搜索
+    - 暂不支持：XPath（`//`）、`<js></js>` 标签、对象型规则、POST 搜索
+
+> 关于上一条：`<js>...</js>` 两段式列表规则（v0.4.0 起在 bookList/chapterList/content 已支持），不支持的是任意字段两段式
 
 ## 构建
 
@@ -125,6 +130,7 @@ powershell -File D:\lanread-build\build.ps1 release    # 仅 release
 - [x] 发现页：exploreUrl 动态/静态入口 + ruleExplore 列表 + 翻页（v0.4.2）
 - [x] 订阅源变量桥接：LanJs 全局桥 + source.getVariable() 搜索关键词可维护（v0.4.3）
 - [x] 发现页封面渲染 + 书架去重（同源+同 URL）（v0.4.4）
+- [x] 导入文本框限高滚动 + 顶层 searchUrl 兼容（v0.4.5）
 - [ ] M2d：WorkManager 定时追更提醒
 - [ ] M3：EPUB 支持、插件仓库协议
 

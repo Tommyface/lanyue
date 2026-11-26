@@ -137,7 +137,8 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
     private fun searchOne(se: SourceEntity, keyword: String): List<SearchHit> {
         val src = BookSourceParser.parseSingle(se.json) ?: return emptyList()
         val rules = src.ruleSearch ?: return emptyList()
-        val searchUrl = rules.searchUrl ?: return emptyList()
+        // Legado 标准把 searchUrl 放在顶层（ruleSearch.searchUrl 为旧兼容）
+        val searchUrl = src.searchUrl ?: rules.searchUrl ?: return emptyList()
         val isComic = (src.bookSourceType ?: 0) == 2
         val keyEnc = URLEncoder.encode(keyword, "UTF-8")
         val vars = mapOf(

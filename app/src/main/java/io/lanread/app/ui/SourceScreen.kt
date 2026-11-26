@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -192,8 +193,11 @@ fun SourceScreen(nav: NavController) {
             OutlinedTextField(
                 value = input.value,
                 onValueChange = { input.value = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("粘贴书源 JSON，或输入书源 URL") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 220.dp)
+                    .verticalScroll(rememberScrollState()),
+                placeholder = { Text("粘贴书源 JSON，或输入书源 URL（超长内容可在框内滚动）") },
                 minLines = 3
             )
             Spacer(Modifier.height(8.dp))

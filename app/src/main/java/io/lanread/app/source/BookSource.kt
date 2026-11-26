@@ -17,6 +17,7 @@ data class BookSource(
     val bookSourceType: Int? = null,
     val enabled: Boolean? = null,
     val enabledExplore: Boolean? = null,
+    val searchUrl: String? = null,    // 搜索 URL（Legado 标准里在顶层，非 ruleSearch 内）
     val jsLib: String? = null,
     val loginUi: String? = null,      // 登录页控件 JSON（数组字符串）
     val loginUrl: String? = null,     // 登录页 JS 函数定义（action 的前置库）
