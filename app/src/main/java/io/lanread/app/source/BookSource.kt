@@ -77,7 +77,11 @@ data class TocRule(
 
 @Serializable
 data class ContentRule(
-    val content: String? = null
+    val content: String? = null,
+    /** 下一页链接规则（ruleContent.nextContentUrl）：正文分页时自动追页拼接 */
+    val nextContentUrl: String? = null,
+    /** 图片解密规则（ruleContent.imageDecode）：源带 AES 等解密时应用 */
+    val imageDecode: String? = null
 )
 
 object BookSourceParser {

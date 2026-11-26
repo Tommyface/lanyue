@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.17
+# 澜阅 LanRead v0.4.18
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -134,7 +134,10 @@
     - **Legado URL 选项语法**：searchUrl 形如 `URL,{"method":"POST","body":"...","headers":{...},"charset":"..."}`（爱看书/去读书/格格党等 19 源实测形态）——Http 层现解析逗号后 JSON 选项（顶层逗号+后接 `{` 限定，查询串逗号不误切），POST/自定义头/charset 全支持
     - **整段 <js> URL**：墨阅·起点等源 searchUrl 为 `<js>host+'/legado/search?key='+encodeURIComponent(key)...</js>` ——evalTemplate 新增 <js>/@js: 整段分支 + host 变量注入（书源首页）
     - **漫画阅读器视频占位**：视频源章节（tiktokcdn mp4 等）混进图片列表时显示占位卡片（“视频内容，阅读器暂不支持播放”）而非报错
-   26. **兼容的 Legado 书源规则子集**：
+   26. **正文自动翻页与视频播放（v0.4.18）**：
+    - **ruleContent.nextContentUrl 自动翻页**：正文分页时逐页抓取拼接（漫画源每页若干图、文本源每页一段均常见），最多 10 页防失控；ContentRule 补齐 nextContentUrl/imageDecode 字段
+    - **视频章节 WebView 播放**：视频源章节占位卡可点击→全屏播放页（系统 WebView 自带 video 控件，支持 mp4/ts，自动播放）
+   27. **兼容的 Legado 书源规则子集**：
    - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
    - `$.` / `@json:` / `[` 开头的 JSONPath
    - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值）

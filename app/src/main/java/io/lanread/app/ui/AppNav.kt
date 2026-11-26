@@ -20,8 +20,11 @@ object Routes {
     const val PREVIEW = "preview/{hit}"
     const val READER = "reader/{bookId}?chapter={chapter}&url={url}"
     const val REPO = "repo"
+    const val VIDEO = "video?url={url}&title={title}"
 
     fun book(bookId: Long) = "book/$bookId"
+    fun video(url: String, title: String): String =
+        "video?url=${android.net.Uri.encode(url)}&title=${android.net.Uri.encode(title)}"
     fun preview(hit: io.lanread.app.source.SourceRepository.SearchHit): String =
         "preview/" + android.net.Uri.encode(
             io.lanread.app.source.BookSourceParser.json.encodeToString(
@@ -67,6 +70,19 @@ fun AppNav() {
             BookScreen(nav, 0L, hit)
         }
         composable(Routes.REPO) { RepoScreen(nav) }
+        composable(
+            Routes.VIDEO,
+            arguments = listOf(
+                navArgument("url") { type = NavType.StringType },
+                navArgument("title") { type = NavType.StringType; defaultValue = "" }
+            )
+        ) { entry ->
+            VideoPlayerScreen(
+                nav,
+                entry.arguments?.getString("url") ?: "",
+                entry.arguments?.getString("title") ?: ""
+            )
+        }
         composable(
             Routes.READER,
             arguments = listOf(

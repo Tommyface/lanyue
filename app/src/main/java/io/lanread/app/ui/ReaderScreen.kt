@@ -350,10 +350,11 @@ fun ReaderScreen(
                     TextButton(onClick = { nav.popBackStack() }) { Text("返回") }
                 }
             } else if (isComic) {
-                // 漫画模式：纵向连续滚动图片（条漫）
+                // 漫画模式：纵向连续滚动图片（条漫）；视频条目占位卡可点击进播放页
                 ComicView(
                     content = vm.content,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    onVideo = { url -> nav.navigate(Routes.video(url, vm.book?.title ?: "")) }
                 )
             } else {
                 Text(
@@ -506,9 +507,14 @@ private fun ReaderMenu(
 }
 
 /** 漫画阅读：解析 <img> 列表，Coil 纵向连续滚动（条漫式体验）
- *  v0.4.17：视频源章节（tiktokcdn mp4 等）混入时给出占位卡片而非报错崩溃 */
+ *  v0.4.17：视频源章节（tiktokcdn mp4 等）混入时给出占位卡片而非报错崩溃
+ *  v0.4.18：视频占位卡可点击进全屏 WebView 播放页 */
 @Composable
-private fun ComicView(content: String, modifier: Modifier = Modifier) {
+private fun ComicView(
+    content: String,
+    modifier: Modifier = Modifier,
+    onVideo: (String) -> Unit = {}
+) {
     val images = remember(content) { parseImgUrls(content) }
     val listState = rememberLazyListState()
     if (images.isEmpty()) {
@@ -529,20 +535,21 @@ private fun ComicView(content: String, modifier: Modifier = Modifier) {
         items(images.size) { i ->
             val url = images[i]
             if (url.isVideoLike()) {
-                // 视频条目（如源把 tiktokcdn mp4 混进图片列表）：占位卡片
+                // 视频条目（如源把 tiktokcdn mp4 混进图片列表）：可点击的占位卡片
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 20.dp),
+                        .padding(vertical = 20.dp)
+                        .clickable { onVideo(url) },
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("🎬", fontSize = 26.sp)
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "视频内容（第 ${i + 1} 项），阅读器暂不支持播放",
+                            "视频内容（第 ${i + 1} 项），点击播放",
                             fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                 }

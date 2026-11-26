@@ -387,26 +387,72 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
     /**
      * 正文：返回文本或 HTML。
      * 漫画源（<js> 产出 <img src=...> 串）原样返回，由阅读器分支渲染图片。
+     * v0.4.18：支持 ruleContent.nextContentUrl 自动翻页——正文分页时逐页抓取拼接
+     * （漫画源每页若干图、文本源每页一段，均常见），最多 10 页防失控。
      */
     suspend fun content(sourceId: Long, chapterUrl: String): String = withContext(Dispatchers.IO) {
         appCtx?.let { LanJs.ensure(it) }
         val se = sourceDao.byId(sourceId) ?: return@withContext ""
         val src = BookSourceParser.parseSingle(se.json) ?: return@withContext ""
         val rule = src.ruleContent?.content ?: return@withContext ""
-        val vars = mapOf("baseUrl" to chapterUrl, "page" to "1")
+        val nextRule = src.ruleContent?.nextContentUrl
         val srcHeaders = Http.parseHeaders(src.header)
 
-        val result: String? = if (rule.trim().startsWith("<js>")) {
-            Analyzer.getString(rule, Analyzer.Ctx(""), vars, src.jsLib, jsLibBindings)
+        var currentUrl = chapterUrl
+        val parts = ArrayList<String>()
+        var visited = HashSet<String>()
+        var pageCount = 0
+        while (pageCount < 10 && !visited.contains(currentUrl)) {
+            visited.add(currentUrl)
+            pageCount++
+            val vars = mapOf("baseUrl" to currentUrl, "page" to pageCount.toString())
+            val (partHtml, nextUrl) = fetchOnePage(src, rule, nextRule, currentUrl, se.url, srcHeaders, vars)
+            if (partHtml.isNotBlank()) parts.add(partHtml)
+            if (nextUrl.isNullOrBlank() || nextUrl == currentUrl) break
+            currentUrl = Http.absUrl(currentUrl, nextUrl)
+        }
+        parts.joinToString("\n").replace("&nbsp;", " ").replace("&#160;", " ")
+    }
+
+    /** 抓单页正文 + 提取下一页链接（nextContentUrl 规则，相对链接按当前页补全） */
+    private fun fetchOnePage(
+        src: BookSource,
+        rule: String,
+        nextRule: String?,
+        currentUrl: String,
+        srcHome: String,
+        srcHeaders: Map<String, String>?,
+        vars: Map<String, Any?>
+    ): Pair<String, String?> {
+        val jsLib = src.jsLib
+        val bindings = jsLibBindings
+        val partHtml: String?
+        var nextPage: String? = null
+        if (rule.trim().startsWith("<js>")) {
+            partHtml = Analyzer.getString(rule, Analyzer.Ctx(""), vars, jsLib, bindings)
         } else {
-            val body = runCatching { Http.get(chapterUrl, se.url, srcHeaders) }.getOrElse { "" }
+            val body = runCatching { Http.get(currentUrl, srcHome, srcHeaders) }.getOrElse { "" }
             val ctx = if (body.trimStart().startsWith("{") || body.trimStart().startsWith("[")) {
                 Analyzer.Ctx(body)
             } else {
-                Analyzer.Ctx(Jsoup.parse(body, chapterUrl))
+                Analyzer.Ctx(Jsoup.parse(body, currentUrl))
             }
-            Analyzer.getString(rule, ctx, vars, src.jsLib, jsLibBindings)
+            partHtml = Analyzer.getString(rule, ctx, vars, jsLib, bindings)
         }
-        (result ?: "").replace("&nbsp;", " ").replace("&#160;", " ")
+        if (!nextRule.isNullOrBlank()) {
+            // nextContentUrl 在当前页 body 上提取（文本/漫画通用），失败即无下一页
+            nextPage = try {
+                val body2 = runCatching { Http.get(currentUrl, srcHome, srcHeaders) }.getOrElse { "" }
+                val ctx2 = if (body2.trimStart().startsWith("{") || body2.trimStart().startsWith("[")) {
+                    Analyzer.Ctx(body2)
+                } else {
+                    Analyzer.Ctx(Jsoup.parse(body2, currentUrl))
+                }
+                Analyzer.getString(nextRule, ctx2, vars, jsLib, bindings)?.trim()
+            } catch (e: Exception) {
+                null
+            }
+        }
+        return (partHtml ?: "") to nextPage
     }
 }
