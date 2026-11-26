@@ -153,11 +153,13 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         // key 传原始关键词（Legado 语义）：JS 脚本内部 String(key) 需要原始值自行编码
         // （OmoFun 等源 encodeURIComponent(String(key))——旧版预编码会导致双重编码搜索失败）；
         // 模板 {{key}} 的替换由 evalTemplate 特判做百分号编码
+        // host：书源首页（墨阅等源的 <js> URL 拼接用 host + '/legado/search...'）
         val tplVars = mapOf(
             "key" to keyword,
             "searchKey" to keyword,
             "page" to "1",
-            "baseUrl" to se.url
+            "baseUrl" to se.url,
+            "host" to se.url
         )
         val url = Analyzer.evalTemplate(
             searchUrl, Analyzer.Ctx(""), tplVars, src.jsLib, jsLibBindings

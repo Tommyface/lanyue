@@ -505,7 +505,8 @@ private fun ReaderMenu(
     }
 }
 
-/** 漫画阅读：解析 <img> 列表，Coil 纵向连续滚动（条漫式体验） */
+/** 漫画阅读：解析 <img> 列表，Coil 纵向连续滚动（条漫式体验）
+ *  v0.4.17：视频源章节（tiktokcdn mp4 等）混入时给出占位卡片而非报错崩溃 */
 @Composable
 private fun ComicView(content: String, modifier: Modifier = Modifier) {
     val images = remember(content) { parseImgUrls(content) }
@@ -526,13 +527,42 @@ private fun ComicView(content: String, modifier: Modifier = Modifier) {
         contentPadding = PaddingValues(vertical = 4.dp)
     ) {
         items(images.size) { i ->
-            AsyncImage(
-                model = images[i],
-                contentDescription = "第${i + 1}张",
-                modifier = Modifier.fillMaxWidth()
-            )
+            val url = images[i]
+            if (url.isVideoLike()) {
+                // 视频条目（如源把 tiktokcdn mp4 混进图片列表）：占位卡片
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 20.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("🎬", fontSize = 26.sp)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "视频内容（第 ${i + 1} 项），阅读器暂不支持播放",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            } else {
+                AsyncImage(
+                    model = images[i],
+                    contentDescription = "第${i + 1}张",
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
     }
+}
+
+/** 视频链接甄别：mp4/ts/m3u8/mime_type=video 或常见视频 CDN 路径特征 */
+private fun String.isVideoLike(): Boolean {
+    val u = this.substringBefore('?')
+    return this.contains("mime_type=video") ||
+        u.endsWith(".mp4") || u.endsWith(".ts") || u.endsWith(".m3u8") ||
+        u.contains("/video/tos/")
 }
 
 private fun parseImgUrls(html: String): List<String> {

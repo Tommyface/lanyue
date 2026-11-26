@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.16
+# 澜阅 LanRead v0.4.17
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -130,7 +130,11 @@
    24. **整段 JS 规则短路（v0.4.16，真机锤死）**：
     - **根因**：`getString()` 对规则做 `||`/`&&`/`##` 切分——JS 代码里遍地 `||`（`String(result||'')`、`j.data||j.list`），一切分脚本就碎成残段 → Rhino 报 `EvaluatorException: missing ) after argument list`（真机漫蛙/OmoFun 详情 init 均中招，即“目录为空”真因）
     - **修复**：`<js>` / `@js:` 开头的整段 JS 规则跳过切分与模板分流，直接整体执行——JVM 实测 8066 (OmoFun) jsLib+init 整段跑通返回完整 JSON，切分版复现真机报错
-   25. **兼容的 Legado 书源规则子集**：
+   25. **POST 搜索与视频章节兼容（v0.4.17，对照 yckceo 19 源实测）**：
+    - **Legado URL 选项语法**：searchUrl 形如 `URL,{"method":"POST","body":"...","headers":{...},"charset":"..."}`（爱看书/去读书/格格党等 19 源实测形态）——Http 层现解析逗号后 JSON 选项（顶层逗号+后接 `{` 限定，查询串逗号不误切），POST/自定义头/charset 全支持
+    - **整段 <js> URL**：墨阅·起点等源 searchUrl 为 `<js>host+'/legado/search?key='+encodeURIComponent(key)...</js>` ——evalTemplate 新增 <js>/@js: 整段分支 + host 变量注入（书源首页）
+    - **漫画阅读器视频占位**：视频源章节（tiktokcdn mp4 等）混进图片列表时显示占位卡片（“视频内容，阅读器暂不支持播放”）而非报错
+   26. **兼容的 Legado 书源规则子集**：
    - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
    - `$.` / `@json:` / `[` 开头的 JSONPath
    - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值）

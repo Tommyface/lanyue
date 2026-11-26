@@ -332,6 +332,19 @@ object Analyzer {
         jsLib: String?,
         bindings: Map<String, Any?>
     ): String {
+        // 整段 JS URL（v0.4.17）：searchUrl 形如 <js>...host+'/legado/search?key='+encodeURIComponent(key)...</js>
+        // （墨阅·起点等源）——无 {{}} 也需执行 JS；注意切分前短路（JS 内 || 会被模板字符扫描忽略，但保险起见先判前缀）
+        val t = template.trim()
+        if (t.startsWith("<js>")) {
+            val end = t.indexOf("</js>")
+            val code = if (end > 0) t.substring(4, end) else t.removePrefix("<js>")
+            val ret = evalJs(code.trim(), ctx, vars, jsLib, bindings) ?: return template
+            return ret
+        }
+        if (t.startsWith("@js:")) {
+            val ret = evalJs(t.removePrefix("@js:"), ctx, vars, jsLib, bindings) ?: return template
+            return ret
+        }
         if (!template.contains("{{")) return template
         val sb = StringBuilder()
         var i = 0

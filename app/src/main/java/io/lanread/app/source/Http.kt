@@ -3,8 +3,11 @@ package io.lanread.app.source
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import okhttp3.FormBody
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Request
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -32,13 +35,85 @@ object Http {
 
     fun get(url: String, baseUrl: String?): String = get(url, baseUrl, null)
 
+    /**
+     * Legado 请求选项（v0.4.17）：searchUrl 形如 `URL,{"method":"POST","body":"k=v&...","headers":{...},"charset":"gbk"}`。
+     * 解析尾部逗号后的 JSON 选项；无选项时为普通 GET。
+     */
+    data class ReqOpts(
+        val method: String = "GET",
+        val body: String? = null,
+        val headers: Map<String, String> = emptyMap(),
+        val charset: String? = null
+    )
+
+    fun parseReqOpts(urlWithOpts: String): Pair<String, ReqOpts> {
+        val t = urlWithOpts.trim()
+        val comma = findOptsComma(t)
+        if (comma < 0) return t to ReqOpts()
+        val urlPart = t.substring(0, comma).trim()
+        val optsRaw = t.substring(comma + 1).trim()
+        if (!optsRaw.startsWith("{")) return t to ReqOpts()
+        return try {
+            val el = Json.parseToJsonElement(optsRaw)
+            val o = el as? JsonObject ?: return t to ReqOpts()
+            val method = (o["method"] as? JsonPrimitive)?.content?.uppercase() ?: "GET"
+            val body = (o["body"] as? JsonPrimitive)?.content
+            val headers = LinkedHashMap<String, String>()
+            (o["headers"] as? JsonObject)?.forEach { (k, v) ->
+                (v as? JsonPrimitive)?.let { p -> headers[k] = p.content }
+            }
+            val charset = (o["charset"] as? JsonPrimitive)?.content
+            urlPart to ReqOpts(method, body, headers, charset)
+        } catch (e: Exception) {
+            t to ReqOpts()
+        }
+    }
+
+    /** 顶层逗号且其后是 { 才当作选项分隔（避免 URL 查询串逗号误切） */
+    private fun findOptsComma(t: String): Int {
+        var depth = 0
+        var inStr = false
+        var esc = false
+        for (i in t.indices) {
+            val c = t[i]
+            when {
+                esc -> esc = false
+                c == '\\' && inStr -> esc = true
+                c == '"' -> inStr = !inStr
+                !inStr && (c == '{' || c == '[') -> depth++
+                !inStr && (c == '}' || c == ']') -> depth--
+                !inStr && c == ',' && depth == 0 -> {
+                    // 逗号后（跳过空白）必须是 { 才算选项起点
+                    var j = i + 1
+                    while (j < t.length && t[j].isWhitespace()) j++
+                    if (j < t.length && t[j] == '{') return i
+                }
+            }
+        }
+        return -1
+    }
+
     /** 带 baseUrl 与源自定义头的 GET；连接级失败（reset/超时）自动重试一次 */
     fun get(url: String, baseUrl: String?, headers: Map<String, String>?): String {
+        val (target, opts) = parseReqOpts(url)
+        return fetch(target, baseUrl, headers, opts)
+    }
+
+    /** POST/GET 通用执行（v0.4.17）：支持源 URL 携带 Legado JSON 选项 */
+    private fun fetch(url: String, baseUrl: String?, extraHeaders: Map<String, String>?, opts: ReqOpts): String {
         val target = absUrl(baseUrl, url)
-        val req = Request.Builder().url(target).apply {
+        val builder = Request.Builder().url(target).apply {
             header("User-Agent", UA)
-            headers?.forEach { (k, v) -> header(k, v) }
-        }.build()
+            extraHeaders?.forEach { (k, v) -> header(k, v) }
+            opts.headers.forEach { (k, v) -> header(k, v) }
+        }
+        if (opts.method == "POST" && opts.body != null) {
+            val ct = opts.headers["Content-Type"] ?: "application/x-www-form-urlencoded"
+            builder.post(opts.body.toRequestBody(ct.toMediaType()))
+        } else if (opts.method == "POST") {
+            builder.post(ByteArray(0).toRequestBody(null))
+        }
+        val req = builder.build()
         var last: IOException? = null
         for (attempt in 1..2) {
             try {
@@ -46,8 +121,9 @@ object Http {
                     if (!resp.isSuccessful) throw RuntimeException("HTTP ${resp.code} @ $url")
                     val bytes = resp.body?.bytes() ?: ByteArray(0)
                     val ctype = resp.header("Content-Type") ?: ""
-                    val declared = Regex("charset=([A-Za-z0-9_\\-]+)", RegexOption.IGNORE_CASE)
-                        .find(ctype)?.groupValues?.getOrNull(1)
+                    val declared = opts.charset
+                        ?: Regex("charset=([A-Za-z0-9_\\-]+)", RegexOption.IGNORE_CASE)
+                            .find(ctype)?.groupValues?.getOrNull(1)
                     return decode(bytes, declared)
                 }
             } catch (e: IOException) {
