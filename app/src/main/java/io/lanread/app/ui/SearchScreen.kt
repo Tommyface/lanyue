@@ -191,7 +191,8 @@ fun SearchScreen(nav: NavController) {
             ) {
                 items(vm.results, key = { "${it.sourceId}::${it.bookUrl}" }) { hit ->
                     SearchHitCard(hit = hit, onClick = {
-                        vm.addToShelf(hit) { msg -> addingMsg = msg }
+                        // 预览模式：进详情页由用户决定是否加入书架（不自动入库）
+                        nav.navigate(Routes.preview(hit))
                     })
                 }
             }

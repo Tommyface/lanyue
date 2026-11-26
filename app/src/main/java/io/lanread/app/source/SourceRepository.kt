@@ -13,6 +13,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.Serializable
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 
@@ -114,6 +115,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
 
     // ---------------- 搜索 ----------------
 
+    @Serializable
     data class SearchHit(
         val sourceId: Long,
         val sourceName: String,
@@ -305,6 +307,10 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val lastChapter: String
     )
 
+    /** 详情页诊断：init 输出摘要（为空/异常时 UI 拼进"目录为空"提示，便于定位真机问题） */
+    @Volatile
+    var lastBookInfoNote: String? = null
+
     suspend fun bookInfo(sourceId: Long, bookUrl: String): BookInfo? = withContext(Dispatchers.IO) {
         appCtx?.let { LanJs.ensure(it) }
         val se = sourceDao.byId(sourceId) ?: return@withContext null
@@ -312,13 +318,17 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val rules = src.ruleBookInfo ?: return@withContext null
         val vars = mapOf("baseUrl" to bookUrl, "page" to "1")
         val srcHeaders = Http.parseHeaders(src.header)
+        lastBookInfoNote = null
 
         // init 规则：执行 JS 得 JSON（对象或字符串），作为字段求值上下文
-        val ctx: Analyzer.Ctx = if (!rules.init.isNullOrBlank()) {
-            val initOut = Analyzer.getString(rules.init, Analyzer.Ctx(""), vars, src.jsLib, jsLibBindings)
-            if (!initOut.isNullOrBlank()) Analyzer.Ctx(initOut)
-            else runCatching { Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl, se.url, srcHeaders), bookUrl)) }
-                .getOrElse { Analyzer.Ctx("") }
+        val initOut = if (!rules.init.isNullOrBlank()) {
+            Analyzer.getString(rules.init, Analyzer.Ctx(""), vars, src.jsLib, jsLibBindings)
+        } else null
+        if (!rules.init.isNullOrBlank() && initOut.isNullOrBlank()) {
+            lastBookInfoNote = "详情规则(init)无输出：jsLib 执行失败或线路不可达"
+        }
+        val ctx: Analyzer.Ctx = if (!initOut.isNullOrBlank()) {
+            Analyzer.Ctx(initOut)
         } else {
             runCatching { Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl, se.url, srcHeaders), bookUrl)) }
                 .getOrElse { Analyzer.Ctx("") }
@@ -327,12 +337,16 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         fun f(rule: String?): String =
             Analyzer.getString(rule, ctx, vars, src.jsLib, jsLibBindings)?.trim() ?: ""
 
-        BookInfo(
+        val info = BookInfo(
             tocUrl = f(rules.tocUrl).ifBlank { bookUrl },
             intro = f(rules.intro),
             coverUrl = f(rules.coverUrl),
             lastChapter = f(rules.lastChapter)
         )
+        if (lastBookInfoNote == null && info.tocUrl.isBlank()) {
+            lastBookInfoNote = "tocUrl 未提取到（回退详情 URL，目录脚本可能拿不到参数）"
+        }
+        info
     }
 
     data class Chapter(val index: Int, val title: String, val url: String)

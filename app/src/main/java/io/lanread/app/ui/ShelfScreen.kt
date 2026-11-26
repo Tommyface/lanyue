@@ -190,13 +190,13 @@ fun ShelfScreen(nav: NavController) {
             }
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 84.dp),
+                columns = GridCells.Adaptive(minSize = 64.dp),
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(
-                    start = 20.dp, end = 20.dp, top = 8.dp, bottom = 88.dp
+                    start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp
                 ),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(list, key = { it.id }) { book ->
                     SpineCard(book = book, onClick = {
@@ -288,7 +288,7 @@ private fun SpineTitle(title: String, maxChars: Int = 9) {
                 Text(
                     c.toString(),
                     fontFamily = LanType.Display,
-                    fontSize = 14.sp,
+                    fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }

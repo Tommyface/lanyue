@@ -17,9 +17,17 @@ object Routes {
     const val RSS_ARTICLE = "rssArticle/{index}"
     const val EXPLORE = "explore"
     const val BOOK = "book/{bookId}"
+    const val PREVIEW = "preview/{hit}"
     const val READER = "reader/{bookId}?chapter={chapter}&url={url}"
+    const val REPO = "repo"
 
     fun book(bookId: Long) = "book/$bookId"
+    fun preview(hit: io.lanread.app.source.SourceRepository.SearchHit): String =
+        "preview/" + android.net.Uri.encode(
+            io.lanread.app.source.BookSourceParser.json.encodeToString(
+                io.lanread.app.source.SourceRepository.SearchHit.serializer(), hit
+            )
+        )
     fun reader(bookId: Long, chapter: Int, url: String) =
         "reader/$bookId?chapter=$chapter&url=${android.net.Uri.encode(url)}"
 }
@@ -46,6 +54,19 @@ fun AppNav() {
         ) { entry ->
             BookScreen(nav, entry.arguments?.getLong("bookId") ?: 0L)
         }
+        composable(
+            Routes.PREVIEW,
+            arguments = listOf(navArgument("hit") { type = NavType.StringType })
+        ) { entry ->
+            val hit = runCatching {
+                io.lanread.app.source.BookSourceParser.json.decodeFromString(
+                    io.lanread.app.source.SourceRepository.SearchHit.serializer(),
+                    entry.arguments?.getString("hit") ?: ""
+                )
+            }.getOrNull()
+            BookScreen(nav, 0L, hit)
+        }
+        composable(Routes.REPO) { RepoScreen(nav) }
         composable(
             Routes.READER,
             arguments = listOf(

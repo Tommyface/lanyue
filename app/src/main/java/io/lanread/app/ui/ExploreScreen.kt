@@ -276,10 +276,8 @@ fun ExploreScreen(nav: NavController) {
                 ) {
                     items(vm.hits, key = { "${it.sourceId}::${it.bookUrl}::${it.title}" }) { hit ->
                         ExploreCard(hit = hit, onClick = {
-                            scope.launch {
-                                val r = vm.repo.addToShelf(hit)
-                                nav.navigate(Routes.book(r.bookId))
-                            }
+                            // 预览模式：进详情页由用户决定是否加入书架（不自动入库）
+                            nav.navigate(Routes.preview(hit))
                         })
                     }
                 }

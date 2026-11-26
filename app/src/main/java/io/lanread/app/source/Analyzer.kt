@@ -151,7 +151,17 @@ object Analyzer {
                 }
                 r.startsWith("//") -> emptyList() // XPath 暂不支持
                 else -> {
-                    val sel = r.substringBefore("@").trim()
+                    // 中缀 @=子选择（Legado 语义 ".layui-card-body@.ylist"= 卡片下的 .ylist 条目）：
+                    // 第二段以 . 开头或为常见标签 → 层级 CSS；末尾 @href 等 attr 词仍走属性提取。
+                    // 旧版丢掉 @ 后段，列表项错位为整卡 → 条目内规则（a@href 等）提取落空。
+                    val at = r.indexOf('@')
+                    val descendant = at > 0 && r.substring(at + 1).let { seg ->
+                        (seg.startsWith(".") || seg.startsWith("#") || HTML_TAGS.contains(seg.substringBefore('.').trim()))
+                    }
+                    val sel = if (descendant) {
+                        r.split('@').filter { it.isNotBlank() }
+                            .joinToString(" ") { splitSelector(it).component1() }
+                    } else r.substringBefore("@").trim()
                     selectItems(body, baseUri, splitSelector(sel).component1())
                 }
             }

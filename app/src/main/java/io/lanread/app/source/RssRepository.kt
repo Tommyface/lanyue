@@ -130,7 +130,9 @@ class RssRepository(
             lastEmptyReason = "站点不可达（${e.message?.take(80) ?: e.javaClass.simpleName}）"
             ""
         }
-        val items = Analyzer.getItems(body, se.url, src.ruleArticles)
+        // baseUri 用实际请求 URL（bhost 活镜像）：旧版用 se.url（yck 源里是死域名 yckgo.top），
+        // 相对 href 经 absUrl 拼出死链 → 一键导入 URL 残缺/不可达
+        val items = Analyzer.getItems(body, url, src.ruleArticles)
         val out = ArrayList<Article>(items.size)
         for (item in items) {
             val title = Analyzer.getString(src.ruleTitle, item, vars, src.jsLib, bindings)?.trim() ?: ""

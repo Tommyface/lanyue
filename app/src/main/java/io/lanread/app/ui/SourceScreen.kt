@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -179,6 +180,12 @@ fun SourceScreen(nav: NavController) {
                 navigationIcon = {
                     IconButton(onClick = { nav.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    // 源仓库：浏览订阅源（yck 类）里的书源分组，点击条目一键导入
+                    IconButton(onClick = { nav.navigate(Routes.REPO) }) {
+                        Icon(Icons.Filled.Menu, contentDescription = "源仓库")
                     }
                 }
             )

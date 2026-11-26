@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -32,7 +33,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -57,6 +60,9 @@ class BookViewModel(app: android.app.Application) : AndroidViewModel(app) {
 
     var book by mutableStateOf<BookEntity?>(null)
         private set
+    /** 预览模式：未入库的候选书（点击搜索/发现结果进入，由用户决定是否加入书架） */
+    var previewHit by mutableStateOf<SourceRepository.SearchHit?>(null)
+        private set
     var chapters by mutableStateOf<List<SourceRepository.Chapter>>(emptyList())
         private set
     var loading by mutableStateOf(true)
@@ -68,6 +74,7 @@ class BookViewModel(app: android.app.Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             loading = true
             error = null
+            previewHit = null
             try {
                 val b = bookDao.byId(bookId)
                 book = b
@@ -79,33 +86,67 @@ class BookViewModel(app: android.app.Application) : AndroidViewModel(app) {
                 val info = repo.bookInfo(b.sourceId, b.uri)
                 val tocUrl = info?.tocUrl ?: b.uri
                 chapters = repo.toc(b.sourceId, tocUrl)
-                if (chapters.isEmpty()) {
-                    error = "目录为空：书源规则可能不适用于该书"
-                }
+                if (chapters.isEmpty()) error = tocEmptyMessage()
             } catch (e: Exception) {
                 error = "加载失败：${e.message}"
             }
             loading = false
         }
     }
+
+    /** 预览模式加载：只拉详情与目录，不写数据库 */
+    fun loadPreview(hit: SourceRepository.SearchHit) {
+        viewModelScope.launch {
+            loading = true
+            error = null
+            book = null
+            previewHit = hit
+            try {
+                val info = repo.bookInfo(hit.sourceId, hit.bookUrl)
+                val tocUrl = info?.tocUrl ?: hit.bookUrl
+                chapters = repo.toc(hit.sourceId, tocUrl)
+                if (chapters.isEmpty()) error = tocEmptyMessage()
+            } catch (e: Exception) {
+                error = "加载失败：${e.message}"
+            }
+            loading = false
+        }
+    }
+
+    private fun tocEmptyMessage(): String {
+        val note = repo.lastBookInfoNote
+        return if (note != null) "目录为空：$note" else "目录为空：书源规则可能不适用于该书"
+    }
+
+    /** 加入书架（预览模式点按钮才入库）：返回书架 id 供跳转 */
+    suspend fun addPreviewToShelf(): Long? {
+        val hit = previewHit ?: return null
+        val r = repo.addToShelf(hit)
+        previewHit = null
+        return r.bookId
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BookScreen(nav: NavController, bookId: Long) {
+fun BookScreen(nav: NavController, bookId: Long, hitArg: SourceRepository.SearchHit? = null) {
     val context = LocalContext.current
     val app = context.applicationContext as android.app.Application
     val vm: BookViewModel = viewModel(factory = viewModelFactory {
         initializer { BookViewModel(app) }
     })
-    LaunchedEffect(bookId) { vm.load(bookId) }
+    LaunchedEffect(bookId, hitArg) {
+        if (hitArg != null) vm.loadPreview(hitArg) else vm.load(bookId)
+    }
+    var addedNav by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        vm.book?.title ?: "书籍详情",
+                        vm.book?.title ?: vm.previewHit?.title ?: "书籍详情",
                         fontFamily = LanType.Display,
                         fontSize = 18.sp,
                         maxLines = 1,
@@ -128,25 +169,30 @@ fun BookScreen(nav: NavController, bookId: Long) {
                 CircularProgressIndicator()
             } else {
                 Column(Modifier.fillMaxSize()) {
-                    vm.book?.let { b ->
+                    val inPreview = vm.previewHit != null
+                    val title = vm.book?.title ?: vm.previewHit?.title
+                    if (title != null) {
                         Column(Modifier.padding(16.dp)) {
                             Text(
-                                b.title,
+                                title,
                                 fontFamily = LanType.Display,
                                 fontSize = 24.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(Modifier.height(2.dp))
+                            val author = vm.book?.author ?: vm.previewHit?.author ?: ""
+                            val srcName = vm.book?.sourceName ?: vm.previewHit?.sourceName ?: ""
                             Text(
-                                "${b.author.ifBlank { "佚名" }} · ${b.sourceName}",
+                                "${author.ifBlank { "佚名" }} · $srcName",
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            if (b.intro.isNotBlank()) {
+                            val intro = vm.book?.intro ?: vm.previewHit?.intro ?: ""
+                            if (intro.isNotBlank()) {
                                 Spacer(Modifier.height(8.dp))
                                 Text(
-                                    b.intro,
+                                    intro,
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 4,
@@ -155,10 +201,27 @@ fun BookScreen(nav: NavController, bookId: Long) {
                             }
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                "共 ${vm.chapters.size} 章 · 已读至第 ${b.chapterIndex + 1} 章",
+                                "共 ${vm.chapters.size} 章" + (vm.book?.let { " · 已读至第 ${it.chapterIndex + 1} 章" } ?: ""),
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.primary
                             )
+                            if (inPreview && !addedNav) {
+                                Spacer(Modifier.height(10.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = {
+                                        if (vm.previewHit == null) return@Button
+                                        scope.launch {
+                                            val id = vm.addPreviewToShelf()
+                                            addedNav = true
+                                            if (id != null) {
+                                                nav.navigate(Routes.book(id)) {
+                                                    popUpTo(Routes.BOOK) { inclusive = true }
+                                                }
+                                            }
+                                        }
+                                    }) { Text("加入书架") }
+                                }
+                            }
                         }
                     }
                     vm.error?.let {
@@ -183,7 +246,20 @@ fun BookScreen(nav: NavController, bookId: Long) {
                         itemsIndexed(vm.chapters, key = { _, c -> c.url }) { i, chapter ->
                             Card(
                                 onClick = {
-                                    nav.navigate(Routes.reader(bookId, i, chapter.url))
+                                    val preview = vm.previewHit
+                                    if (preview != null) {
+                                        // 预览模式点章节：先入库（阅读器需 bookId 存进度）再进阅读器
+                                        scope.launch {
+                                            val id = vm.addPreviewToShelf()
+                                            if (id != null) {
+                                                nav.navigate(Routes.reader(id, i, chapter.url)) {
+                                                    popUpTo(Routes.BOOK) { inclusive = true }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        nav.navigate(Routes.reader(bookId, i, chapter.url))
+                                    }
                                 },
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
                                 colors = CardDefaults.cardColors(
