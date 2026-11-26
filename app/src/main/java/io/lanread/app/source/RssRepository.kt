@@ -149,6 +149,18 @@ class RssRepository(
                 if (altBody.length > body.length) {
                     val altItems = Analyzer.getItems(altBody, altUrl, src.ruleArticles)
                     if (altItems.isNotEmpty()) {
+                        // bhost() 缓存纠正（v0.4.14）：重试成功的镜像写回 JS cache 的
+                        // working_host，renderArticle 里 {{bhost()}} 生成的一键导入
+                        // URL 才会指向真正服务内容的镜像（而非伪活的那台）
+                        runCatching {
+                            (bindings["cache"] as? Analyzer.JsCache)?.let { c ->
+                                c.putMemory("working_host", "https://$mh")
+                                c.putMemory(
+                                    "host_expire",
+                                    (System.currentTimeMillis() + 300000L).toString()
+                                )
+                            }
+                        }
                         return@withContext buildArticles(src, altItems, altUrl, vars, bindings)
                     }
                 }

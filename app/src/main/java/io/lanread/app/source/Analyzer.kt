@@ -255,16 +255,21 @@ object Analyzer {
                 selectByCss(root, css, index, attrOf(body))
             }
             else -> {
+                // 前导 @ 容错（v0.4.14）：Legado 规则 `@a@href` / `@span.-2@text`（yck 订阅源
+                // ruleDescription/rulePubDate 的实用写法）此前 splitSelector 截到空前缀 → css 为空
+                // → 提取 null → 一键导入 URL 残缺（/yuedu//json/id/.json）与时间行空白。
+                // @js:/@css:/@json: 已在前面分支处理，此处剩余前导 @ 一律剥离。
+                val rr = if (r.startsWith("@")) r.substring(1) else r
                 val v = ctx.value
                 // JSON 字符串上下文（如 ruleBookInfo.init 的 JS 返回值）：
                 // 裸字段名按 $.key 取，否则 name/author/tocUrl 等全部提取失败（v0.4.10 修复）
                 val jsonLike = v is String && v.trimStart().let { it.startsWith("{") || it.startsWith("[") }
                 val root = if (jsonLike) null else ctx.asElement()
                 if (root != null) {
-                    val (css, index) = splitSelector(r)
-                    selectByCss(root, css, index, attrOf(r))
+                    val (css, index) = splitSelector(rr)
+                    selectByCss(root, css, index, attrOf(rr))
                 } else if (v is Map<*, *> || v is List<*> || jsonLike) {
-                    readJson(ctx, "$." + r)?.stringified()
+                    readJson(ctx, "$." + rr)?.stringified()
                 } else null
             }
         }
@@ -494,12 +499,20 @@ object Analyzer {
             }
             val ret = cx.evaluateString(scope, full, "<lanread>", 1, null)
             return when {
-                ret == null -> null
+                ret == null -> {
+                    // 脚本完成值为 JS null（无异常抛出）——单独记录，与真异常区分（诊断用）
+                    lastJsError = "完成值为 null（无异常抛出）"
+                    null
+                }
                 ret is String -> ret
                 else -> Context.toString(ret)
             }
         } catch (e: Exception) {
             lastJsError = "${e.javaClass.simpleName}: ${e.message?.take(120)}"
+            return null
+        } catch (t: Throwable) {
+            // StackOverflowError 等 java.lang.Error：Exception 捕不住，此前会静默返回 null
+            lastJsError = "${t.javaClass.simpleName}: ${t.message?.take(120)}"
             return null
         } finally {
             try { Context.exit() } catch (ignore: Exception) { }

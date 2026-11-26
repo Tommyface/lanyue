@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.13
+# 澜阅 LanRead v0.4.14
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -119,7 +119,11 @@
     - **singleUrl/无分组订阅源兼容**：无 sortUrl 的源自动兑底「首页」分组（如源仓库官方纯净入口）
     - **JS 异常透出**：详情 init 空输出时区分“脚本异常：具体异常”与“返回空（线路不可达）”，拼进目录为空提示
     - **书架重设计**：单列列表（左 3:4 圆角封面 + 右书名/作者/已读进度/最新章节/两行简介）
-   22. **兼容的 Legado 书源规则子集**：
+   22. **前导 @ 规则兼容与镜像纠正（v0.4.14，真机反馈）**：
+    - **前导 @ 规则剥离**：`@a@href` / `@span.-2@text`（yck 订阅源 ruleDescription/rulePubDate 的实用写法）此前提取为 null → 一键导入 URL 残缺（`/yuedu//json/id/.json`）与时间行空白；实测修复后导入 URL 拼出完整 `/yuedu/shuyuan/json/id/8165.json` 且返回有效书源 JSON
+    - **镜像重试后纠正 bhost 缓存**：重试成功的镜像写回 JS cache 的 working_host，renderArticle 里 `{{bhost()}}` 生成的一键导入 URL 指向真正服务内容的镜像
+    - **evalJs 捕获 Throwable**（StackOverflowError 等 java.lang.Error 此前静默返回 null）+ 空完成值单独记录——真机诊断不再盲区
+   23. **兼容的 Legado 书源规则子集**：
    - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
    - `$.` / `@json:` / `[` 开头的 JSONPath
    - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值）

@@ -4,6 +4,6 @@ local.properties
 .idea/
 build/
 captures/
-.externalNativeBuild
+.externalNativeBuild/
 .cxx
 .DS_Store
