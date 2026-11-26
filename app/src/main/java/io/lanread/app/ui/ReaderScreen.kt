@@ -163,6 +163,10 @@ class ReaderViewModel(app: android.app.Application) : AndroidViewModel(app) {
     var book by mutableStateOf<BookEntity?>(null)
         private set
 
+    /** v0.4.19 图片解密：imageDecode 规则存在时，图片 URL → 解密后本地 file:// 的映射 */
+    var imageUrls by mutableStateOf<List<String>>(emptyList())
+        private set
+
     fun load(bookId: Long, chapter: Int, url: String) {
         viewModelScope.launch {
             loading = true
@@ -188,6 +192,12 @@ class ReaderViewModel(app: android.app.Application) : AndroidViewModel(app) {
                     repo.content(b.sourceId, url)
                 }
                 if (content.isBlank()) error = "正文为空：书源规则未能提取内容"
+                // v0.4.19：漫画图片解密管线（imageDecode 规则）
+                if (b.type == 2 && content.contains("<img")) {
+                    imageUrls = withContext(Dispatchers.IO) {
+                        repo.decryptImages(b.sourceId, content)
+                    }
+                }
             } catch (e: Exception) {
                 error = "加载失败：${e.message}"
             }
@@ -351,8 +361,10 @@ fun ReaderScreen(
                 }
             } else if (isComic) {
                 // 漫画模式：纵向连续滚动图片（条漫）；视频条目占位卡可点击进播放页
+                // v0.4.19：优先用解密管线产物（imageDecode 源），无则现场解析 <img>
+                val imgs = if (vm.imageUrls.isNotEmpty()) vm.imageUrls else parseImgUrls(vm.content)
                 ComicView(
-                    content = vm.content,
+                    images = imgs,
                     modifier = Modifier.fillMaxSize(),
                     onVideo = { url -> nav.navigate(Routes.video(url, vm.book?.title ?: "")) }
                 )
@@ -511,11 +523,10 @@ private fun ReaderMenu(
  *  v0.4.18：视频占位卡可点击进全屏 WebView 播放页 */
 @Composable
 private fun ComicView(
-    content: String,
+    images: List<String>,
     modifier: Modifier = Modifier,
     onVideo: (String) -> Unit = {}
 ) {
-    val images = remember(content) { parseImgUrls(content) }
     val listState = rememberLazyListState()
     if (images.isEmpty()) {
         Box(modifier, contentAlignment = Alignment.Center) {

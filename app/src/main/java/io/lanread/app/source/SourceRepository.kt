@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import org.jsoup.Jsoup
+import java.io.File
 
 /** 全局 JS 桥：java/cache/source 绑定单例（put/get 跨调用持久） */
 object LanJs {
@@ -454,5 +455,75 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
             }
         }
         return (partHtml ?: "") to nextPage
+    }
+
+    /**
+     * v0.4.19 漫画图片解密管线：对正文 <img> 列表逐图
+     * 下载（图片专用 OkHttp：UA/自签证书/HTTP1.1）→ 执行 imageDecode JS（result=图片字节）→
+     * 解密结果写临时文件，返回 file:// URL 列表（未配置 imageDecode 或解密失败回退原始 URL）。
+     */
+    suspend fun decryptImages(sourceId: Long, contentHtml: String): List<String> = withContext(Dispatchers.IO) {
+        appCtx?.let { LanJs.ensure(it) }
+        val se = sourceDao.byId(sourceId) ?: return@withContext emptyList()
+        val src = BookSourceParser.parseSingle(se.json) ?: return@withContext emptyList()
+        val decodeRule = src.ruleContent?.imageDecode ?: return@withContext emptyList()
+        val urls = ArrayList<String>()
+        for (m in Regex("""<img[^>]+src=["']([^"']+)["']""").findAll(contentHtml)) {
+            urls.add(m.groupValues[1])
+        }
+        val out = ArrayList<String>(urls.size)
+        val tmpDir = File(appCtx?.cacheDir, "comic-decrypt").apply { mkdirs() }
+        for ((i, u) in urls.withIndex()) {
+            // 下载原始字节
+            val bytes = runCatching {
+                imageOkHttp(appCtx).newCall(
+                    okhttp3.Request.Builder().url(Http.absUrl(se.url, u))
+                        .header("User-Agent", Http.UA).header("Referer", se.url).build()
+                ).execute().use { r -> r.body?.bytes() }
+            }.getOrNull()
+            if (bytes == null || bytes.isEmpty()) {
+                out.add(u)   // 下载失败：回退原始 URL（Coil 直接试）
+                continue
+            }
+            // imageDecode JS：result = 图片字节（Base64 可读形式传入）
+            val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+            val decoded: ByteArray? = runCatching {
+                Analyzer.getString(
+                    decodeRule, Analyzer.Ctx(""), mapOf("baseUrl" to u),
+                    src.jsLib, jsLibBindings + mapOf("result" to b64)
+                )?.let { s ->
+                    if (s.isBlank()) null
+                    else android.util.Base64.decode(s.trim(), android.util.Base64.DEFAULT)
+                }
+            }.getOrNull()
+            // JS 失败 → 原样（未解密）字节也落盘（比远程 URL 显示更稳）；解密成功 → 解密后字节
+            val final = decoded ?: bytes
+            val f = File(tmpDir, "img-${System.currentTimeMillis()}-$i.img")
+            runCatching { f.writeBytes(final) }
+            out.add(if (f.exists()) "file://${f.absolutePath}" else u)
+        }
+        out
+    }
+
+    /** 图片专用 OkHttp：与 LanApp 的 Coil 加载器同口径（自签证书放行 + HTTP/1.1） */
+    private fun imageOkHttp(ctx: Context?): okhttp3.OkHttpClient {
+        return okhttp3.OkHttpClient.Builder()
+            .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .sslSocketFactory(looseSsl().first, looseSsl().second)
+            .hostnameVerifier { _, _ -> true }
+            .build()
+    }
+
+    private fun looseSsl(): Pair<javax.net.ssl.SSLSocketFactory, javax.net.ssl.X509TrustManager> {
+        val tm = object : javax.net.ssl.X509TrustManager {
+            override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+            override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+            override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+        }
+        val ssl = javax.net.ssl.SSLContext.getInstance("SSL")
+        ssl.init(null, arrayOf<javax.net.ssl.TrustManager>(tm), java.security.SecureRandom())
+        return ssl.socketFactory to tm
     }
 }

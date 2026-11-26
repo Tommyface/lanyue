@@ -69,6 +69,65 @@ object Analyzer {
         fun remove(k: String?) {
             if (k != null) store.remove(k)
         }
+
+        /**
+         * Legado 同名 API（v0.4.19）：java.createSymmetricCrypto("aes/cbc/pkcs7padding", key, iv)
+         * .decrypt(result)——漫蛙源 imageDecode 用它解密图片字节。
+         * key/iv 直接作 UTF-8 字节（Legado 对称加密的默认口径）；PKCS5/7 去填充。
+         */
+        fun createSymmetricCrypto(transformation: String?, key: String?, iv: String?): SymmetricCrypto? {
+            if (transformation.isNullOrBlank() || key.isNullOrBlank()) return null
+            return try {
+                SymmetricCrypto(
+                    transformation.lowercase(),
+                    key.toByteArray(Charsets.UTF_8),
+                    (iv ?: key).toByteArray(Charsets.UTF_8)
+                )
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        class SymmetricCrypto(
+            private val transformation: String,
+            private val key: ByteArray,
+            private val iv: ByteArray
+        ) {
+            /** 解密（图片字节等）：fail 返回 null（调用方 fallback 原始数据） */
+            fun decrypt(data: String?): ByteArray? = decryptBytes(
+                when {
+                    data == null -> null
+                    // base64 输入（Legado imageDecode 常用口径）
+                    else -> runCatching { android.util.Base64.decode(data, android.util.Base64.DEFAULT) }
+                        .getOrElse { data.toByteArray(Charsets.UTF_8) }
+                }
+            )
+
+            fun decryptBytes(data: ByteArray?): ByteArray? {
+                if (data == null || data.isEmpty()) return null
+                return try {
+                    val t = transformation
+                    val cipher = javax.crypto.Cipher.getInstance(t)
+                    val sks = javax.crypto.spec.SecretKeySpec(key, t.substringBefore('/').uppercase())
+                    when (t.substringAfter('/').substringBefore('/')) {
+                        "cbc", "cfb", "ofb", "ctr" -> {
+                            // IV 必须与块长一致（AES=16）：密钥短时补零，长时截断
+                            val ivx = ByteArray(16) { if (it < iv.size && it < 16) iv[it] else 0 }
+                            cipher.init(
+                                javax.crypto.Cipher.DECRYPT_MODE, sks,
+                                javax.crypto.spec.IvParameterSpec(ivx)
+                            )
+                        }
+                        else -> cipher.init(javax.crypto.Cipher.DECRYPT_MODE, sks)
+                    }
+                    val out = cipher.doFinal(data)
+                    // PKCS5 去填充（块对齐失败时返回 null 走 fallback）
+                    if (out != null && out.isNotEmpty()) out else null
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        }
     }
 
     class JsCache {
