@@ -10,15 +10,16 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
@@ -45,7 +46,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -189,17 +192,15 @@ fun ShelfScreen(nav: NavController) {
                 )
             }
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 64.dp),
+            LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(
                     start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp
                 ),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(list, key = { it.id }) { book ->
-                    SpineCard(book = book, onClick = {
+                    BookRowCard(book = book, onClick = {
                         if (book.type == 0) {
                             nav.navigate(Routes.reader(book.id, book.chapterIndex, book.uri))
                         } else {
@@ -230,79 +231,94 @@ fun ShelfScreen(nav: NavController) {
 }
 
 /**
- * 签名元素：书脊式竖排书卡。
- * 中文标题按单字竖排（书脊形制）；无汉字的标题回退为横排。
- * 底端色带标注书的来源：竹青=本地，澜水=在线。
+ * 书架条目（v0.4.13，按参考图重设计）：单列列表——左侧 3:4 圆角封面（无封面回退书名首字底纹），
+ * 右侧书名/作者/进度/最新章节/两行简介。长按移出书架。
  */
 @Composable
-private fun SpineCard(book: BookEntity, onClick: () -> Unit, onLongClick: () -> Unit) {
-    val band = when (book.type) {
-        0 -> MaterialTheme.colorScheme.tertiary   // 本地：竹青
-        2 -> MaterialTheme.colorScheme.primary    // 漫画：墨青
-        else -> MaterialTheme.colorScheme.secondary // 在线：澜水
-    }
-    Box(
+private fun BookRowCard(book: BookEntity, onClick: () -> Unit, onLongClick: () -> Unit) {
+    Row(
         Modifier
-            .aspectRatio(0.34f)
-            .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.small)
-            .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surface)
             .pointerInput(Unit) {
                 detectTapGestures(onTap = { onClick() }, onLongPress = { onLongClick() })
             }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(
-            Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        Box(
+            Modifier
+                .width(66.dp)
+                .height(88.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center
         ) {
-            SpineTitle(book.title)
-            Spacer(Modifier.weight(1f))
+            if (book.coverUrl.isNotBlank()) {
+                coil.compose.AsyncImage(
+                    model = book.coverUrl,
+                    contentDescription = "封面",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Text(
+                    book.title.take(1),
+                    fontFamily = LanType.Display,
+                    fontSize = 26.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
             Text(
-                book.author.ifBlank { if (book.type == 0) "本地" else book.sourceName },
-                fontSize = 10.sp,
+                book.title,
+                fontFamily = LanType.Display,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "作者：${book.author.ifBlank { if (book.type == 0) "本地导入" else "佚名" }}",
+                fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-        }
-        // 底端色带：来源标记（竹=本地，澜=在线）
-        Box(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth(0.86f)
-                .height(5.dp)
-                .background(band)
-        )
-    }
-}
-
-@Composable
-private fun SpineTitle(title: String, maxChars: Int = 9) {
-    val hasCjk = title.any { it.code in 0x4E00..0x9FFF }
-    if (hasCjk) {
-        val shown = if (title.length > maxChars) title.take(maxChars - 1) + "…" else title
-        Column(
-            Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            for (c in shown) {
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "已读至第 ${book.chapterIndex + 1} 章",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (book.latestChapter.isNotBlank()) {
+                Spacer(Modifier.height(2.dp))
                 Text(
-                    c.toString(),
-                    fontFamily = LanType.Display,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurface
+                    "最新：${book.latestChapter}",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (book.intro.isNotBlank()) {
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    book.intro,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
-    } else {
-        Text(
-            title,
-            fontFamily = LanType.Display,
-            fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center,
-            maxLines = 6,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth()
-        )
     }
 }

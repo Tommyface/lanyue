@@ -31,6 +31,10 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object Analyzer {
 
+    /** 最近一次 JS 执行异常（诊断透出用；每次 evalJs 开场清零） */
+    @Volatile
+    var lastJsError: String? = null
+
     /** 求值上下文：jsoup Element / Document，或 JSON 反序列化后的 Map/List/字符串 */
     class Ctx(val value: Any?) {
         fun asElement(): Element? = when (value) {
@@ -453,8 +457,10 @@ object Analyzer {
         val cx = try {
             Context.enter()
         } catch (e: Exception) {
+            lastJsError = "Rhino Context.enter 失败：${e.message}"
             return null
         }
+        lastJsError = null
         try {
             // Android 上禁 JIT 字节码生成，纯解释模式（兼容性最好）
             cx.optimizationLevel = -1
@@ -493,6 +499,7 @@ object Analyzer {
                 else -> Context.toString(ret)
             }
         } catch (e: Exception) {
+            lastJsError = "${e.javaClass.simpleName}: ${e.message?.take(120)}"
             return null
         } finally {
             try { Context.exit() } catch (ignore: Exception) { }

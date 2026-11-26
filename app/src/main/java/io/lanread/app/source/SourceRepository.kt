@@ -325,7 +325,9 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
             Analyzer.getString(rules.init, Analyzer.Ctx(""), vars, src.jsLib, jsLibBindings)
         } else null
         if (!rules.init.isNullOrBlank() && initOut.isNullOrBlank()) {
-            lastBookInfoNote = "详情规则(init)无输出：jsLib 执行失败或线路不可达"
+            val jsErr = Analyzer.lastJsError
+            lastBookInfoNote = if (jsErr != null) "详情规则(init)脚本异常：$jsErr"
+            else "详情规则(init)返回空（多半线路不可达或解密失败）"
         }
         val ctx: Analyzer.Ctx = if (!initOut.isNullOrBlank()) {
             Analyzer.Ctx(initOut)

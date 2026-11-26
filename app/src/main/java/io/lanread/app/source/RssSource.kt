@@ -38,9 +38,10 @@ data class RssSource(
     val lastUpdateTime: Long? = null,
     val type: Int? = null
 ) {
-    /** 解析 sortUrl 为分组列表（丢弃无 :: 的行） */
+    /** 解析 sortUrl 为分组列表（丢弃无 :: 的行）；无 sortUrl 时兜底单分组=源首页（singleUrl 类） */
     fun groups(): List<RssGroup> {
-        val raw = sortUrl ?: return emptyList()
+        val raw = sortUrl
+        if (raw.isNullOrBlank()) return listOf(RssGroup("首页", sourceUrl))
         return raw.split('\n')
             .mapNotNull { line ->
                 val i = line.indexOf("::")

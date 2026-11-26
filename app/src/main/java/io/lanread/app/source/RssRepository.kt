@@ -132,7 +132,47 @@ class RssRepository(
         }
         // baseUri 用实际请求 URL（bhost 活镜像）：旧版用 se.url（yck 源里是死域名 yckgo.top），
         // 相对 href 经 absUrl 拼出死链 → 一键导入 URL 残缺/不可达
-        val items = Analyzer.getItems(body, url, src.ruleArticles)
+        var items = Analyzer.getItems(body, url, src.ruleArticles)
+
+        // 镜像降级重试（v0.4.13）：部分镜像 HEAD 200 伪活但 GET 深路径回壳页（实测 yck.email），
+        // 解析 0 条时从 jsLib 提取候选域名逐个替换 host 重试，出内容即用
+        if (items.isEmpty() && body.isNotBlank()) {
+            val mirrorHosts = Regex("https?://([A-Za-z0-9.-]+)")
+                .findAll(src.jsLib ?: "")
+                .map { it.groupValues[1] }
+                .filter { it != UriHost(url) }
+                .distinct()
+                .take(5)
+            for (mh in mirrorHosts) {
+                val altUrl = swapHost(url, mh) ?: continue
+                val altBody = runCatching { Http.get(altUrl, se.url, srcHeaders) }.getOrNull() ?: continue
+                if (altBody.length > body.length) {
+                    val altItems = Analyzer.getItems(altBody, altUrl, src.ruleArticles)
+                    if (altItems.isNotEmpty()) {
+                        return@withContext buildArticles(src, altItems, altUrl, vars, bindings)
+                    }
+                }
+            }
+        }
+        buildArticles(src, items, url, vars, bindings)
+    }
+
+    private fun UriHost(u: String): String =
+        Regex("https?://([A-Za-z0-9.-]+)").find(u)?.groupValues?.get(1) ?: ""
+
+    /** 把 URL 的 host 换成指定域名（scheme 保持原样） */
+    private fun swapHost(u: String, host: String): String? {
+        val m = Regex("(https?://)([A-Za-z0-9.-]+)(/.*)?").find(u) ?: return null
+        return m.groupValues[1] + host + m.groupValues[3]
+    }
+
+    private fun buildArticles(
+        src: RssSource,
+        items: List<Analyzer.Ctx>,
+        baseUri: String,
+        vars: Map<String, Any?>,
+        bindings: Map<String, Any?>
+    ): List<Article> {
         val out = ArrayList<Article>(items.size)
         for (item in items) {
             val title = Analyzer.getString(src.ruleTitle, item, vars, src.jsLib, bindings)?.trim() ?: ""
@@ -142,7 +182,7 @@ class RssRepository(
             val html = renderArticle(src, item, vars, bindings)
             out.add(Article(title, link, pubDate, html))
         }
-        out
+        return out
     }
 
     /** 在列表项上下文渲染正文（ruleDescription 模板 + style 注入） */
