@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -136,12 +137,14 @@ class RssViewModel(app: android.app.Application) : AndroidViewModel(app) {
         groupIndex = 0
         page = 1
         articles = emptyList()
+        searchMode = false
         if (id != null) load()
     }
 
     fun selectGroup(i: Int) {
         groupIndex = i
         page = 1
+        searchMode = false
         if (activeSourceId != null) load()
     }
 
@@ -149,7 +152,50 @@ class RssViewModel(app: android.app.Application) : AndroidViewModel(app) {
         val next = page + delta
         if (next < 1) return
         page = next
-        load()
+        if (searchMode) searchAgain() else load()
+    }
+
+    // ---------- v0.4.21 订阅源搜索 ----------
+    var searchMode by mutableStateOf(false)
+        private set
+    var searching by mutableStateOf(false)
+        private set
+    var searchKeyword by mutableStateOf("")
+        private set
+
+    fun search(keyword: String) {
+        if (keyword.isBlank()) return
+        searchKeyword = keyword
+        page = 1
+        searchMode = true
+        searchAgain()
+    }
+
+    /** 退出搜索模式，回到分组浏览 */
+    fun exitSearch() {
+        searchMode = false
+        page = 1
+        if (activeSourceId != null) load()
+    }
+
+    private fun searchAgain() {
+        val sid = activeSourceId ?: return
+        viewModelScope.launch {
+            searching = true
+            message = null
+            articles = emptyList()
+            val list = repo.searchSource(sid, searchKeyword, page)
+            searching = false
+            if (list == null) {
+                message = "该源不支持搜索（未配置 searchUrl）"
+            } else {
+                articles = list
+                if (list.isEmpty()) {
+                    val reason = repo.lastEmptyReason
+                    message = if (reason != null) "没有搜到：$reason" else "没有搜到相关内容（或已到末页）"
+                }
+            }
+        }
     }
 
     private fun load() {
@@ -186,6 +232,8 @@ class RssViewModel(app: android.app.Application) : AndroidViewModel(app) {
             if (activeSourceId == id) {
                 activeSourceId = null
                 articles = emptyList()
+                searchMode = false
+                page = 1
             }
         }
     }
@@ -214,6 +262,7 @@ fun RssScreen(nav: NavController) {
     }
 
     var importOpen by remember { mutableStateOf(false) }
+    var searchOpen by remember { mutableStateOf(false) }
     var sourceMenuOpen by remember { mutableStateOf(false) }
     var deletePickerOpen by remember { mutableStateOf(false) }
     var varsOpen by remember { mutableStateOf(false) }
@@ -237,6 +286,11 @@ fun RssScreen(nav: NavController) {
                     }
                 },
                 actions = {
+                    if (activeSource != null) {
+                        IconButton(onClick = { searchOpen = true }) {
+                            Icon(Icons.Filled.Search, contentDescription = "搜索本订阅源")
+                        }
+                    }
                     if ((sources?.size ?: 0) > 1) {
                         Box {
                             IconButton(onClick = { sourceMenuOpen = true }) {
@@ -299,7 +353,26 @@ fun RssScreen(nav: NavController) {
                 Spacer(Modifier.height(12.dp))
             }
 
-            if (vm.loading) {
+            if (vm.searchMode) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "搜索「${vm.searchKeyword}」",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    TextButton(onClick = { vm.exitSearch() }) { Text("退出搜索") }
+                }
+                Spacer(Modifier.height(6.dp))
+            }
+
+            if (vm.loading || vm.searching) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
@@ -430,6 +503,45 @@ fun RssScreen(nav: NavController) {
             },
             dismissButton = {
                 TextButton(onClick = { importOpen = false; vm.clearImportMessage() }) { Text("取消") }
+            }
+        )
+    }
+
+    if (searchOpen && activeSource != null) {
+        val kw = remember { mutableStateOf(if (vm.searchMode) vm.searchKeyword else "") }
+        AlertDialog(
+            onDismissRequest = { searchOpen = false },
+            title = { Text("搜索「${activeSource.name}」") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = kw.value,
+                        onValueChange = { kw.value = it },
+                        singleLine = true,
+                        placeholder = { Text("输入关键词（源需配置 searchUrl）") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "搜索结果沿用底部翻页；不支持搜索的源会提示。",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (kw.value.isNotBlank()) {
+                            searchOpen = false
+                            vm.search(kw.value.trim())
+                        }
+                    },
+                    enabled = !vm.searching
+                ) { Text(if (vm.searching) "搜索中…" else "搜索") }
+            },
+            dismissButton = {
+                TextButton(onClick = { searchOpen = false }) { Text("取消") }
             }
         )
     }

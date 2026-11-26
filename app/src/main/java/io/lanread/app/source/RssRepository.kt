@@ -121,7 +121,54 @@ class RssRepository(
         val vars = mapOf("page" to page.toString())
         val bindings = LanJs.bindings()
         val url = Analyzer.evalTemplate(g.urlTemplate, Analyzer.Ctx(""), vars, src.jsLib, bindings)
+        fetchAndBuild(se, src, url, vars, bindings)
+    }
 
+    /**
+     * v0.4.21 订阅源搜索：按源 searchUrl 模板（注入 key/searchKey/变量）请求 + 复用解析链。
+     * 933 型 `/vodsearch/...?wd={{String(source.variable)}}`：source 绑临时 JsSource（variable=关键词），
+     * 不碰全局变量存；yck 型 `{{key}}` 直取 vars。无 searchUrl 的源返回 null（UI 提示）。
+     */
+    suspend fun searchSource(
+        sourceId: Long,
+        keyword: String,
+        page: Int = 1
+    ): List<Article>? = withContext(Dispatchers.IO) {
+        LanJs.ensure(appCtx)
+        val se = rssDao.byId(sourceId) ?: return@withContext null
+        val src = RssSourceParser.parseSingle(se.json) ?: return@withContext null
+        val tpl = src.searchUrl ?: return@withContext null
+        if (keyword.isBlank()) return@withContext null
+
+        val vars = mapOf(
+            "key" to keyword,
+            "searchKey" to keyword,
+            "page" to page.toString(),
+            "baseUrl" to se.url,
+            "sourceKey" to keyword
+        )
+        // source 绑临时桥：variable=关键词（{{source.variable}} 型模板），写入不影响全局存
+        val bindings = mapOf(
+            "java" to LanJs.java,
+            "cache" to LanJs.cache,
+            "source" to Analyzer.JsSource(keyword)
+        )
+        val url = Analyzer.evalTemplate(tpl, Analyzer.Ctx(""), vars, src.jsLib, bindings)
+        if (url.isBlank() || !url.startsWith("http") && !url.startsWith("/")) {
+            lastEmptyReason = "searchUrl 模板未生成有效 URL"
+            return@withContext emptyList()
+        }
+        fetchAndBuild(se, src, url, vars, bindings)
+    }
+
+    /** 公共链路（v0.4.21 抽出）：请求 → ruleArticles 解析 → 0 条时镜像降级重试 → buildArticles */
+    private fun fetchAndBuild(
+        se: io.lanread.app.data.RssSourceEntity,
+        src: RssSource,
+        url: String,
+        vars: Map<String, Any?>,
+        bindings: Map<String, Any?>
+    ): List<Article> {
         lastEmptyReason = null
         val srcHeaders = Http.parseHeaders(src.header)
         val body = try {
@@ -161,12 +208,12 @@ class RssRepository(
                                 )
                             }
                         }
-                        return@withContext buildArticles(src, altItems, altUrl, vars, bindings)
+                        return buildArticles(src, altItems, altUrl, vars, bindings)
                     }
                 }
             }
         }
-        buildArticles(src, items, url, vars, bindings)
+        return buildArticles(src, items, url, vars, bindings)
     }
 
     private fun UriHost(u: String): String =

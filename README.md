@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.20
+# 澜阅 LanRead v0.4.21
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -144,15 +144,20 @@
     - **ruleContent 播放器页**：视频类订阅源（933 国产黑料型）文章点击时拉原网页执行 ruleContent，产出自绘 hls.js 播放器页
     - **WebView source JS 桥**：注入 source.get/put（与 LanJs 全局桥同存储），播放器页轮询 source.get("hijacked_video_url") 取真实视频流
     - RssSource 模型补 ruleContent/ruleImage/searchUrl 字段；视频源文章加载中态与失败回退（原网页直接渲染）
-   29. **兼容的 Legado 书源规则子集**：
-   - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
-   - `$.` / `@json:` / `[` 开头的 JSONPath
-   - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值）
-   - `class./tag./id.` 默认语法 + 数字索引 + `@attr`
-   - `##regex[##replace]` 净化规则、`&&` 并列、`||` 兜底
-    - 暂不支持：XPath（`//`）、`<js></js>` 标签、对象型规则、POST 搜索
+    29. **订阅源搜索（v0.4.21）**：
+     - **searchUrl 搜索**：订阅源列表页搜索图标 → 输入关键词，按源 searchUrl 模板请求（注入 key/searchKey/sourceKey/page/baseUrl 变量，source 绑临时 variable 桥不污染全局存），933 型 `{{String(source.variable)}}` 与 yck 型 `{{key}}` 模板均兼容
+     - **搜索翻页**：搜索结果沿用底部翻页递增 page；未配置 searchUrl 的源明确提示
+     - 仓库重构：抽出 fetchAndBuild 公共链路（请求 + ruleArticles 解析 + 镜像降级重试 + working_host 回写），分组浏览与搜索共用
+    30. **兼容的 Legado 书源规则子集**：
+    - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
+    - `$.` / `@json:` / `[` 开头的 JSONPath
+    - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值），整段 `<js>` 前缀（v0.4.14 起）
+    - `class./tag./id.` 默认语法 + 数字索引 + `@attr`
+    - `##regex[##replace]` 净化规则、`&&` 并列、`||` 兜底
+    - `URL,{JSON}` 选项：POST body / 自定义 headers / charset（v0.4.17 起）
+     - 暂不支持：XPath（`//`）、对象型规则、任意字段两段式
 
-> 关于上一条：`<js>...</js>` 两段式列表规则（v0.4.0 起在 bookList/chapterList/content 已支持），不支持的是任意字段两段式
+> 关于上一条：`<js>...</js>` 两段式列表规则（v0.4.0 起在 bookList/chapterList/content 已支持）
 
 ## 构建
 
