@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.14
+# 澜阅 LanRead v0.4.15
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -123,7 +123,11 @@
     - **前导 @ 规则剥离**：`@a@href` / `@span.-2@text`（yck 订阅源 ruleDescription/rulePubDate 的实用写法）此前提取为 null → 一键导入 URL 残缺（`/yuedu//json/id/.json`）与时间行空白；实测修复后导入 URL 拼出完整 `/yuedu/shuyuan/json/id/8165.json` 且返回有效书源 JSON
     - **镜像重试后纠正 bhost 缓存**：重试成功的镜像写回 JS cache 的 working_host，renderArticle 里 `{{bhost()}}` 生成的一键导入 URL 指向真正服务内容的镜像
     - **evalJs 捕获 Throwable**（StackOverflowError 等 java.lang.Error 此前静默返回 null）+ 空完成值单独记录——真机诊断不再盲区
-   23. **兼容的 Legado 书源规则子集**：
+   23. **整段 @js: 规则与 Legado key 语义（v0.4.15，对照 OmoFun/8100 实测）**：
+    - **列表规则支持整段 `@js:`**（OmoFun bookList 为 `@js:(function(){...})()` 完整 IIFE）：返回 java List/JS 数组自动拆条目（旧版 toString 变乱码）；搜索 URL 也支持整段 @js:
+    - **key 传原始关键词**（Legado 语义）：JS 脚本内 `String(key)` 拿原始值自行编码（OmoFun `encodeURIComponent(key)`，旧版预编码双重编码必失败）；模板 `{{key}}` 替换时百分号编码
+    - **JS 返回值二次模板替换**：@js: 脚本返回值里保留的 `{{page}}` 等占位符继续由模板系统替换（实测 searchUrl 拼出 `/search/海盗----------1---.html`）
+   24. **兼容的 Legado 书源规则子集**：
    - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
    - `$.` / `@json:` / `[` 开头的 JSONPath
    - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值）

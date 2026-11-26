@@ -126,6 +126,25 @@ object Analyzer {
         val r = rule.trim()
         return try {
             when {
+                r.startsWith("@js:") -> {
+                    // 整段 JS 列表规则（v0.4.15）：OmoFun 等源 bookList 为 @js:(function(){...})()
+                    // 返回值可能是 List（JS Array 或 java.util.ArrayList）/ JSON 数组字符串 / 单对象
+                    val raw = evalJsRaw(r.removePrefix("@js:"), Ctx(body), vars, jsLib, bindings)
+                    when (raw) {
+                        is List<*> -> raw.map { Ctx(it) }
+                        else -> {
+                            val s = raw?.let { Context.toString(it) } ?: return emptyList()
+                            if (s.isBlank()) emptyList()
+                            else {
+                                val v = readJson(Ctx(s), "$")?.value
+                                when (v) {
+                                    is List<*> -> v.map { Ctx(it) }
+                                    else -> listOf(Ctx(s))
+                                }
+                            }
+                        }
+                    }
+                }
                 r.startsWith("<js>") -> {
                     // 两段式：<js>脚本</js> 后半段（如 $.list）
                     val end = r.indexOf("</js>")
@@ -292,6 +311,7 @@ object Analyzer {
     /**
      * 模板求值：{{...}} 内容自动分流——
      *   @xxx / $.xxx / .xxx / //xxx / [ 开头 → 规则表达式（getString）
+     *   key/searchKey → URL 编码值（Legado 模板语义；JS 脚本内部的 key 变量则是原始值）
      *   其余 → JS 脚本（可带 jsLib 与绑定）
      */
     fun evalTemplate(
@@ -320,13 +340,31 @@ object Analyzer {
                     code.startsWith(".") || code.startsWith("//") ||
                     code.startsWith("[") ->
                     getString(code, ctx, vars, jsLib, bindings)
+                // {{key}}/{{searchKey}}：URL 模板语义——直接替换为百分号编码值
+                code == "key" || code == "searchKey" ->
+                    (vars[code] as? String)?.let { urlEncode(it) }
                 else -> evalJs(code, ctx, vars, jsLib, bindings)
             }
             sb.append(v ?: "")
             i = e + 2
         }
-        return sb.toString()
+        // 二次模板替换（v0.4.15）：@js: 整段脚本（OmoFun searchUrl IIFE）返回值里
+        // 会保留 {{page}} 等占位符供模板系统继续替换——首轮结果仍含 {{ 时再跑
+        // 一轮（只做一轮；变量不命中的占位符原样保留）
+        val out = sb.toString()
+        if (!out.contains("{{") || out == template) return out
+        return try {
+            val second = evalTemplate(out, ctx, vars, jsLib, bindings)
+            // 仍含 {{ 且与首轮相同 → 说明是无法解析的占位符，保留原样
+            if (second == out) out else second
+        } catch (e: Exception) {
+            out
+        }
     }
+
+    /** {{key}} 模板替换用：URL 百分号编码（空格→%20） */
+    private fun urlEncode(s: String): String =
+        java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
     // ---------------- JSONPath ----------------
 
@@ -459,6 +497,27 @@ object Analyzer {
         jsLib: String?,
         bindings: Map<String, Any?>
     ): String? {
+        val raw = evalJsRaw(code, ctx, vars, jsLib, bindings)
+        return raw?.let {
+            when (it) {
+                is String -> it
+                else -> Context.toString(it)
+            }
+        }
+    }
+
+    /**
+     * evalJs 的原始对象版（v0.4.15）：@js: 列表规则可能返回
+     * NativeArray / java.util.ArrayList（OmoFun parseList→arr()），
+     * toString 会变乱码——getItems 需拿原始 List 拆 Ctx。
+     */
+    private fun evalJsRaw(
+        code: String,
+        ctx: Ctx,
+        vars: Map<String, Any?>,
+        jsLib: String?,
+        bindings: Map<String, Any?>
+    ): Any? {
         val cx = try {
             Context.enter()
         } catch (e: Exception) {
@@ -498,14 +557,14 @@ object Analyzer {
                 append(code)
             }
             val ret = cx.evaluateString(scope, full, "<lanread>", 1, null)
-            return when {
-                ret == null -> {
+            // NativeArray 等 Scriptable 包装为 Java 可用的 List（unwrap）
+            return when (ret) {
+                null -> {
                     // 脚本完成值为 JS null（无异常抛出）——单独记录，与真异常区分（诊断用）
                     lastJsError = "完成值为 null（无异常抛出）"
                     null
                 }
-                ret is String -> ret
-                else -> Context.toString(ret)
+                else -> Context.jsToJava(ret, Any::class.java)
             }
         } catch (e: Exception) {
             lastJsError = "${e.javaClass.simpleName}: ${e.message?.take(120)}"
