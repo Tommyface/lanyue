@@ -161,7 +161,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         // （漫蛙等源的 bookList 脚本从 baseUrl 里提取 k=/page= 参数）
         val vars = tplVars + mapOf("baseUrl" to url)
         // 模板化 URL（{{Url()}} 动态线路）请求失败不致命：bookList 的 JS 通常自行请求
-        val body = runCatching { Http.get(url) }.getOrElse { "" }
+        val body = runCatching { Http.get(url, se.url) }.getOrElse { "" }
         // 列表规则（<js>$.list 两段式 / CSS / JSONPath）
         val items = Analyzer.getItems(body, se.url, rules.bookList, vars, src.jsLib, jsLibBindings)
         val hits = ArrayList<SearchHit>()
@@ -175,8 +175,8 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
                     sourceName = se.name,
                     title = name,
                     author = Analyzer.getString(rules.author, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
-                    bookUrl = bookUrl,
-                    coverUrl = Analyzer.getString(rules.coverUrl, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
+                    bookUrl = Http.absUrl(se.url, bookUrl),
+                    coverUrl = Http.absUrl(se.url, Analyzer.getString(rules.coverUrl, item, vars, src.jsLib, jsLibBindings)?.trim() ?: ""),
                     latestChapter = Analyzer.getString(rules.lastChapter, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
                     intro = Analyzer.getString(rules.intro, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
                     isComic = isComic
@@ -191,17 +191,20 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
 
     /** 将搜索/发现结果入库：同源+同 URL 已在书架则直接返回既有书（去重） */
     suspend fun addToShelf(hit: SearchHit): ShelfResult = withContext(Dispatchers.IO) {
-        val existing = bookDao.bySourceAndUri(hit.sourceId, hit.bookUrl)
+        // 相对路径兜底补全：以库中书源地址为 base（防止漏网相对链接入书架后打不开）
+        val baseUrl = sourceDao.byId(hit.sourceId)?.url
+        val absUri = Http.absUrl(baseUrl, hit.bookUrl)
+        val existing = bookDao.bySourceAndUri(hit.sourceId, absUri)
         if (existing != null) return@withContext ShelfResult(existing.id, existed = true)
         val id = bookDao.insert(
             BookEntity(
                 title = hit.title,
                 author = hit.author,
                 type = if (hit.isComic) 2 else 1,
-                uri = hit.bookUrl,
+                uri = absUri,
                 sourceId = hit.sourceId,
                 sourceName = hit.sourceName,
-                coverUrl = hit.coverUrl,
+                coverUrl = Http.absUrl(baseUrl, hit.coverUrl),
                 intro = hit.intro,
                 latestChapter = hit.latestChapter
             )
@@ -250,7 +253,12 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         )
         // 同搜索：规则阶段的 baseUrl 为实际分页 URL（漫娃脚本从中提取 /api/… path 与 tag）
         val vars = tplVars + mapOf("baseUrl" to url)
-        val body = runCatching { Http.get(url) }.getOrElse { return@withContext emptyList() }
+        val body = try {
+            Http.get(url, se.url)
+        } catch (e: Exception) {
+            lastEmptyReason = "入口页请求失败（${e.message?.take(80) ?: e.javaClass.simpleName}），若列表规则含 JS 可自愈"
+            ""
+        }
         val items = Analyzer.getItems(body, se.url, rules.bookList, vars, src.jsLib, jsLibBindings)
         val hits = ArrayList<SearchHit>()
         for (item in items) {
@@ -263,8 +271,8 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
                     sourceName = se.name,
                     title = name,
                     author = Analyzer.getString(rules.author, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
-                    bookUrl = bookUrl,
-                    coverUrl = Analyzer.getString(rules.coverUrl, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
+                    bookUrl = Http.absUrl(se.url, bookUrl),
+                    coverUrl = Http.absUrl(se.url, Analyzer.getString(rules.coverUrl, item, vars, src.jsLib, jsLibBindings)?.trim() ?: ""),
                     latestChapter = Analyzer.getString(rules.lastChapter, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
                     intro = Analyzer.getString(rules.intro, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
                     isComic = isComic
@@ -301,10 +309,10 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val ctx: Analyzer.Ctx = if (!rules.init.isNullOrBlank()) {
             val initOut = Analyzer.getString(rules.init, Analyzer.Ctx(""), vars, src.jsLib, jsLibBindings)
             if (!initOut.isNullOrBlank()) Analyzer.Ctx(initOut)
-            else runCatching { Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl), bookUrl)) }
+            else runCatching { Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl, se.url), bookUrl)) }
                 .getOrElse { Analyzer.Ctx("") }
         } else {
-            runCatching { Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl), bookUrl)) }
+            runCatching { Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl, se.url), bookUrl)) }
                 .getOrElse { Analyzer.Ctx("") }
         }
 
@@ -333,7 +341,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val items = if (chapterListRule.trim().startsWith("<js>")) {
             Analyzer.getItems("", tocUrl, chapterListRule, vars, src.jsLib, jsLibBindings)
         } else {
-            val body = runCatching { Http.get(tocUrl) }.getOrElse { "" }
+            val body = runCatching { Http.get(tocUrl, se.url) }.getOrElse { "" }
             Analyzer.getItems(body, tocUrl, chapterListRule, vars, src.jsLib, jsLibBindings)
         }
         val list = ArrayList<Chapter>()
@@ -361,7 +369,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val result: String? = if (rule.trim().startsWith("<js>")) {
             Analyzer.getString(rule, Analyzer.Ctx(""), vars, src.jsLib, jsLibBindings)
         } else {
-            val body = runCatching { Http.get(chapterUrl) }.getOrElse { "" }
+            val body = runCatching { Http.get(chapterUrl, se.url) }.getOrElse { "" }
             val ctx = if (body.trimStart().startsWith("{") || body.trimStart().startsWith("[")) {
                 Analyzer.Ctx(body)
             } else {

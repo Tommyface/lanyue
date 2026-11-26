@@ -88,27 +88,23 @@ object Analyzer {
         fun get(k: String?): String? = k?.let { store[it] }
     }
 
-        /**
-     * JS 可见类白名单。原则：书源 JS 由用户自行导入（README 已声明风险自担），
-     * 需放行真实书源用到的网络/加密/工具类（含 HttpURLConnection 的 OkHttp 实现类、
-     * JDK 的 sun.net.www 协议实现），仅拒绝进程级危险类。
+    /**
+     * JS 可见类控制（黑名单制，v0.4.8）。
+     * 前缀白名单注定枚举不完 Android 系统实现：真机上 HttpURLConnection 的实现类是
+     * com.android.okhttp.*（不是 okhttp3.*），TLS 握手在 conscrypt，socket 读写走
+     * libcore.io.Posix——都不是 java./javax. 前缀，白名单一漏网络就全挂。
+     * 书源 JS 由用户自行导入（README 已声明风险自担），因此只拒绝明确的进程级危险类：
      */
     private object LanShutter : ClassShutter {
-        private val deny = setOf(
+        private val denyExact = setOf(
             "java.lang.Runtime", "java.lang.ProcessBuilder", "java.lang.Process",
-            "java.lang.Shutdown", "java.lang.ApplicationShutdownHooks"
+            "java.lang.Shutdown", "java.lang.ApplicationShutdownHooks",
+            "java.lang.ClassLoader", "java.lang.SecurityManager"
         )
-        override fun visibleToScripts(fullClassName: String): Boolean {
-            if (fullClassName in deny) return false
-            return fullClassName.startsWith("org.jsoup.") ||
-                fullClassName.startsWith("java.") ||
-                fullClassName.startsWith("javax.") ||
-                fullClassName.startsWith("android.") ||
-                fullClassName.startsWith("okhttp3.") ||
-                fullClassName.startsWith("okio.") ||
-                fullClassName.startsWith("sun.net.") ||
-                fullClassName.startsWith("kotlin.") ||
-                fullClassName.startsWith("io.lanread.")
+        override fun visibleToScripts(fullClassName: String): Boolean = when {
+            fullClassName in denyExact -> false
+            fullClassName.startsWith("dalvik.system.") -> false   // DexClassLoader 动态加载代码
+            else -> true
         }
     }
 

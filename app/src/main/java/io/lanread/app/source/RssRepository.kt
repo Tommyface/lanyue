@@ -124,7 +124,7 @@ class RssRepository(
 
         lastEmptyReason = null
         val body = try {
-            Http.get(url)
+            Http.get(url, se.url)
         } catch (e: Exception) {
             lastEmptyReason = "站点不可达（${e.message?.take(80) ?: e.javaClass.simpleName}）"
             ""
