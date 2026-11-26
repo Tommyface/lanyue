@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.15
+# 澜阅 LanRead v0.4.16
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -127,7 +127,10 @@
     - **列表规则支持整段 `@js:`**（OmoFun bookList 为 `@js:(function(){...})()` 完整 IIFE）：返回 java List/JS 数组自动拆条目（旧版 toString 变乱码）；搜索 URL 也支持整段 @js:
     - **key 传原始关键词**（Legado 语义）：JS 脚本内 `String(key)` 拿原始值自行编码（OmoFun `encodeURIComponent(key)`，旧版预编码双重编码必失败）；模板 `{{key}}` 替换时百分号编码
     - **JS 返回值二次模板替换**：@js: 脚本返回值里保留的 `{{page}}` 等占位符继续由模板系统替换（实测 searchUrl 拼出 `/search/海盗----------1---.html`）
-   24. **兼容的 Legado 书源规则子集**：
+   24. **整段 JS 规则短路（v0.4.16，真机锤死）**：
+    - **根因**：`getString()` 对规则做 `||`/`&&`/`##` 切分——JS 代码里遍地 `||`（`String(result||'')`、`j.data||j.list`），一切分脚本就碎成残段 → Rhino 报 `EvaluatorException: missing ) after argument list`（真机漫蛙/OmoFun 详情 init 均中招，即“目录为空”真因）
+    - **修复**：`<js>` / `@js:` 开头的整段 JS 规则跳过切分与模板分流，直接整体执行——JVM 实测 8066 (OmoFun) jsLib+init 整段跑通返回完整 JSON，切分版复现真机报错
+   25. **兼容的 Legado 书源规则子集**：
    - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
    - `$.` / `@json:` / `[` 开头的 JSONPath
    - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值）

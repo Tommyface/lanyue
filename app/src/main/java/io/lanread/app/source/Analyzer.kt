@@ -211,6 +211,17 @@ object Analyzer {
     ): String? {
         if (rule.isNullOrBlank()) return null
         val r = rule.trim()
+        // 整段 JS 规则（v0.4.16）：跳过 ||/&&/## 切分与 {{ 模板分流。
+        // JS 代码里遍地是 ||（String(result||'')、j.data||j.list）——一切分脚本就碎成残段，
+        // Rhino 解析报 EvaluatorException: missing ) after argument list（真机实测根因）。
+        // 漫蛙 <js>…</js> 与 OmoFun @js:(function(){…})() 的 init 均为此形态。
+        if (r.startsWith("<js>") || r.startsWith("@js:")) {
+            return try {
+                evalMain(r, ctx, vars, jsLib, bindings)
+            } catch (e: Exception) {
+                null
+            }
+        }
         if (r.contains("{{") && r.contains("}}")) {
             val tpl = evalTemplate(r, ctx, vars, jsLib, bindings)
             if (tpl.isNotBlank()) return tpl
