@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.9
+# 澜阅 LanRead v0.4.10
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -31,7 +31,7 @@
 - **阅读主题**：纸 / 宣 / 竹 / 夜
 - **图标**：宣纸底 + 墨青书脊 + 澜水波
 
-## 功能（v0.4.9）
+## 功能（v0.4.10）
 
 1. **书架**：本地 TXT 导入（SAF）、在线书籍收藏、长按移除、阅读进度自动保存
 2. **书源管理**：粘贴 JSON / URL 导入 Legado 书源、启停、删除、按 URL 去重
@@ -104,7 +104,10 @@
     - **列表去重**：搜索/发现页结果、目录章节均按 URL 去重，消除 Compose key 冲突闪退（同页重复书籍/重复章节时必崩）
     - **HTTP/1.1 + 连接级重试**：部分 CDN/防护对 HTTP/2 或非浏览器 TLS 指纹直接 RST（真机 Connection reset），强制 1.1 并自动重试一次
     - **源 header 字段实现**：书源/订阅源自带请求头（UA/Referer 等）现随源请求发出，反爬场景不再裸连
-   19. **兼容的 Legado 书源规则子集**：
+   19. **ES6 语法与 JSON 上下文提取修复（v0.4.10，真机反馈）**：
+    - **Rhino 开 ES6 语言版本**：yck 等源 jsLib 用 `const { java, cache } = this` 解构赋值，ES5 解析直接报 missing : after property id → bhost() 无法执行 → URL 回退到已死域名 → “站点不可达(Connection reset)”。实测 ES6 版本下 bhost() 完整跑通并测速选出活镜像（yck.email）
+    - **JSON 字符串上下文的裸字段名提取**：ruleBookInfo.init 的 JS 返回 JSON 字符串时，name/author/coverUrl/tocUrl 等裸字段名此前全部提取失败（只支持 Map/List 上下文）→ tocUrl 回退到详情 URL（无 book_id）→ 漫蛙目录为空的直接根因。现 String 且以 { 或 [ 开头自动按 $.key 解析
+   20. **兼容的 Legado 书源规则子集**：
    - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
    - `$.` / `@json:` / `[` 开头的 JSONPath
    - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值）
@@ -156,6 +159,7 @@ powershell -File D:\lanread-build\build.ps1 release    # 仅 release
 - [x] 发现页/订阅源列表 Http 降级 + 空页原因透出（v0.4.7，漫蛙 API 拒绝裸 GET 的 501 场景）
 - [x] 沙箱改黑名单制 + 相对 URL 全链路补全（v0.4.8，真机 com.android.okhttp 拦截与 /yuedu 相对路径）
 - [x] 崩溃日志落盘 + 列表去重 + HTTP/1.1 重试 + 源 header 支持（v0.4.9）
+- [x] Rhino ES6 语言版本（解构赋值）+ JSON 字符串裸字段名提取（v0.4.10，漫蛙目录为空与 yck Connection reset 根因）
 - [ ] M2d：WorkManager 定时追更提醒
 - [ ] M3：EPUB 支持、插件仓库协议
 

@@ -241,13 +241,16 @@ object Analyzer {
                 selectByCss(root, css, index, attrOf(body))
             }
             else -> {
-                val root = ctx.asElement()
+                val v = ctx.value
+                // JSON 字符串上下文（如 ruleBookInfo.init 的 JS 返回值）：
+                // 裸字段名按 $.key 取，否则 name/author/tocUrl 等全部提取失败（v0.4.10 修复）
+                val jsonLike = v is String && v.trimStart().let { it.startsWith("{") || it.startsWith("[") }
+                val root = if (jsonLike) null else ctx.asElement()
                 if (root != null) {
                     val (css, index) = splitSelector(r)
                     selectByCss(root, css, index, attrOf(r))
-                } else if (ctx.value is Map<*, *> || ctx.value is List<*>) {
-                    // JSON 对象上下文：无前缀字段名按 $.key 取
-                    readJson(ctx, "$.$r")?.stringified()
+                } else if (v is Map<*, *> || v is List<*> || jsonLike) {
+                    readJson(ctx, "$." + r)?.stringified()
                 } else null
             }
         }
@@ -445,6 +448,9 @@ object Analyzer {
         try {
             // Android 上禁 JIT 字节码生成，纯解释模式（兼容性最好）
             cx.optimizationLevel = -1
+            // ES6 语法（const/箭头函数/解构赋值）：yck 等源的 jsLib 用 const{java,cache}=this 解构，
+            // 默认 ES5 解析直接报 missing : after property id，必须提语言版本
+            cx.setLanguageVersion(Context.VERSION_ES6)
             cx.setClassShutter(LanShutter)
             val scope: Scriptable = cx.initStandardObjects()
             // 供 jsLib 使用 Packages.org.jsoup 的简写
