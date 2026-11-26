@@ -88,18 +88,28 @@ object Analyzer {
         fun get(k: String?): String? = k?.let { store[it] }
     }
 
-    /** JS 可见类白名单（沙箱化） */
+        /**
+     * JS 可见类白名单。原则：书源 JS 由用户自行导入（README 已声明风险自担），
+     * 需放行真实书源用到的网络/加密/工具类（含 HttpURLConnection 的 OkHttp 实现类、
+     * JDK 的 sun.net.www 协议实现），仅拒绝进程级危险类。
+     */
     private object LanShutter : ClassShutter {
-        override fun visibleToScripts(fullClassName: String): Boolean =
-            fullClassName.startsWith("org.jsoup.") ||
-                fullClassName.startsWith("java.lang.") ||
-                fullClassName.startsWith("java.util.") ||
-                fullClassName.startsWith("java.security.") ||
-                fullClassName.startsWith("javax.crypto.") ||
-                fullClassName.startsWith("java.net.") ||
-                fullClassName.startsWith("java.io.") ||
-                fullClassName.startsWith("android.util.") ||
+        private val deny = setOf(
+            "java.lang.Runtime", "java.lang.ProcessBuilder", "java.lang.Process",
+            "java.lang.Shutdown", "java.lang.ApplicationShutdownHooks"
+        )
+        override fun visibleToScripts(fullClassName: String): Boolean {
+            if (fullClassName in deny) return false
+            return fullClassName.startsWith("org.jsoup.") ||
+                fullClassName.startsWith("java.") ||
+                fullClassName.startsWith("javax.") ||
+                fullClassName.startsWith("android.") ||
+                fullClassName.startsWith("okhttp3.") ||
+                fullClassName.startsWith("okio.") ||
+                fullClassName.startsWith("sun.net.") ||
+                fullClassName.startsWith("kotlin.") ||
                 fullClassName.startsWith("io.lanread.")
+        }
     }
 
     // ---------------- 列表规则（bookList / chapterList / ruleArticles） ----------------
@@ -437,6 +447,8 @@ object Analyzer {
             return null
         }
         try {
+            // Android 上禁 JIT 字节码生成，纯解释模式（兼容性最好）
+            cx.optimizationLevel = -1
             cx.setClassShutter(LanShutter)
             val scope: Scriptable = cx.initStandardObjects()
             // 供 jsLib 使用 Packages.org.jsoup 的简写

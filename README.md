@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.5
+# 澜阅 LanRead v0.4.6
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -31,7 +31,7 @@
 - **阅读主题**：纸 / 宣 / 竹 / 夜
 - **图标**：宣纸底 + 墨青书脊 + 澜水波
 
-## 功能（v0.4.5）
+## 功能（v0.4.6）
 
 1. **书架**：本地 TXT 导入（SAF）、在线书籍收藏、长按移除、阅读进度自动保存
 2. **书源管理**：粘贴 JSON / URL 导入 Legado 书源、启停、删除、按 URL 去重
@@ -83,7 +83,14 @@
   14. **导入体验修复（v0.4.5）**：
     - 书源/订阅源导入文本框限高 + 框内可滚动：粘贴超长 JSON 不再把导入按钮顶出屏幕
     - 支持 Legado 标准顶层 `searchUrl` 字段（此前仅读 `ruleSearch.searchUrl`，标准书源搜索会静默失败）
-  15. **兼容的 Legado 书源规则子集**：
+  15. **搜索/发现页链路修复（v0.4.6，真机反馈）**：
+    - JS 沙箱白名单扩容：放行 `java./javax./android./okhttp3./okio./sun.net.` 前缀（保留 Runtime/ProcessBuilder 等进程级拒绝）——旧白名单拦截了 HttpURLConnection 的 OkHttp 实现类，导致漫蛙等源的 jsLib 内置网络请求全部失败
+    - 规则阶段 `baseUrl` 改传实际请求 URL（旧版传书源首页），漫蛙 bookList 从 baseUrl 提取 `k=`/`/api/` path 的源恢复正常
+    - Rhino 改解释模式（optimizationLevel=-1），Android 兼容性优先
+    - 单源搜索限时 90s、发现页入口解析限时 120s：弱网下线路探测不再永久卡 UI
+    - 模板化 URL 请求失败不阻断（JS 自管请求的源依赖 bookList 脚本自行拉取）
+    - 订阅源导入防呆：粘贴书源 JSON 时提示去书源页导入
+  16. **兼容的 Legado 书源规则子集**：
    - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
    - `$.` / `@json:` / `[` 开头的 JSONPath
    - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值）
@@ -131,6 +138,7 @@ powershell -File D:\lanread-build\build.ps1 release    # 仅 release
 - [x] 订阅源变量桥接：LanJs 全局桥 + source.getVariable() 搜索关键词可维护（v0.4.3）
 - [x] 发现页封面渲染 + 书架去重（同源+同 URL）（v0.4.4）
 - [x] 导入文本框限高滚动 + 顶层 searchUrl 兼容（v0.4.5）
+- [x] 沙箱白名单扩容 + baseUrl 实际 URL + 搜索限时（v0.4.6，漫蛙源全链路修复）
 - [ ] M2d：WorkManager 定时追更提醒
 - [ ] M3：EPUB 支持、插件仓库协议
 

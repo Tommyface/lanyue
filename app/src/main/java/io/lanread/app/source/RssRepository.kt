@@ -36,6 +36,10 @@ class RssRepository(
         val list = RssSourceParser.parseText(body)
             .filter { it.sourceName.isNotBlank() && it.sourceUrl.isNotBlank() }
         if (list.isEmpty()) {
+            // 防呆：书源 JSON 误导入订阅源（bookSourceUrl 为 Legado 书源独有标志）
+            if (body.contains("bookSourceUrl")) {
+                return@withContext ImportResult(0, 0, "这是书源（BookSource）格式，请到「书源」页导入")
+            }
             return@withContext ImportResult(0, 0, "未解析到订阅源（内容不是 RssSource JSON）")
         }
         var added = 0

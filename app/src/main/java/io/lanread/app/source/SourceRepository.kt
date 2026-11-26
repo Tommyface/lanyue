@@ -12,6 +12,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 
@@ -128,7 +129,9 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         coroutineScope {
             sources.map { se ->
                 async {
-                    runCatching { searchOne(se, keyword) }.getOrElse { emptyList() }
+                    // 单源限时：书源自带 JS 探测线路时避免弱网下长时间卡搜索
+                    runCatching { withTimeoutOrNull(90_000L) { searchOne(se, keyword) } }
+                        .getOrElse { emptyList() } ?: emptyList()
                 }
             }.awaitAll().flatten()
         }
@@ -141,16 +144,20 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val searchUrl = src.searchUrl ?: rules.searchUrl ?: return emptyList()
         val isComic = (src.bookSourceType ?: 0) == 2
         val keyEnc = URLEncoder.encode(keyword, "UTF-8")
-        val vars = mapOf(
+        val tplVars = mapOf(
             "key" to keyEnc,
             "searchKey" to keyEnc,
             "page" to "1",
             "baseUrl" to se.url
         )
         val url = Analyzer.evalTemplate(
-            searchUrl, Analyzer.Ctx(""), vars, src.jsLib, jsLibBindings
+            searchUrl, Analyzer.Ctx(""), tplVars, src.jsLib, jsLibBindings
         )
-        val body = Http.get(url)
+        // Legado 约定：规则阶段的 baseUrl 是实际请求 URL
+        // （漫蛙等源的 bookList 脚本从 baseUrl 里提取 k=/page= 参数）
+        val vars = tplVars + mapOf("baseUrl" to url)
+        // 模板化 URL（{{Url()}} 动态线路）请求失败不致命：bookList 的 JS 通常自行请求
+        val body = runCatching { Http.get(url) }.getOrElse { "" }
         // 列表规则（<js>$.list 两段式 / CSS / JSONPath）
         val items = Analyzer.getItems(body, se.url, rules.bookList, vars, src.jsLib, jsLibBindings)
         val hits = ArrayList<SearchHit>()
@@ -205,9 +212,11 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
     /** 发现页入口分组（exploreUrl 静态解析 或 @js: 动态执行） */
     suspend fun exploreEntries(sourceId: Long): List<ExploreItem> = withContext(Dispatchers.IO) {
         appCtx?.let { LanJs.ensure(it) }
-        val se = sourceDao.byId(sourceId) ?: return@withContext emptyList()
-        val src = BookSourceParser.parseSingle(se.json) ?: return@withContext emptyList()
-        val raw = src.exploreUrl ?: return@withContext emptyList()
+        // 动态入口可能逐线探测网络（漫蛙 4 频道 × 5 线路），限时防 UI 长转圈
+        withTimeoutOrNull(120_000L) {
+        val se = sourceDao.byId(sourceId) ?: return@withTimeoutOrNull emptyList()
+        val src = BookSourceParser.parseSingle(se.json) ?: return@withTimeoutOrNull emptyList()
+        val raw = src.exploreUrl ?: return@withTimeoutOrNull emptyList()
         if (raw.trim().startsWith("@js:")) {
             // 动态标签：执行 JS（jsLib 前置），返回 JSON 数组
             val js = raw.trim().removePrefix("@js:")
@@ -217,6 +226,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         } else {
             ExploreUrlParser.parseStatic(raw)
         }
+        } ?: emptyList()
     }
 
     /** 发现页某分组第 page 页的书籍列表（复用 ruleExplore 规则链） */
@@ -230,10 +240,12 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val src = BookSourceParser.parseSingle(se.json) ?: return@withContext emptyList()
         val rules = src.ruleExplore ?: return@withContext emptyList()
         val isComic = (src.bookSourceType ?: 0) == 2
-        val vars = mapOf("page" to page.toString(), "baseUrl" to se.url)
+        val tplVars = mapOf("page" to page.toString(), "baseUrl" to se.url)
         val url = Analyzer.evalTemplate(
-            entryUrlTemplate, Analyzer.Ctx(""), vars, src.jsLib, jsLibBindings
+            entryUrlTemplate, Analyzer.Ctx(""), tplVars, src.jsLib, jsLibBindings
         )
+        // 同搜索：规则阶段的 baseUrl 为实际分页 URL（漫娃脚本从中提取 /api/… path 与 tag）
+        val vars = tplVars + mapOf("baseUrl" to url)
         val body = runCatching { Http.get(url) }.getOrElse { return@withContext emptyList() }
         val items = Analyzer.getItems(body, se.url, rules.bookList, vars, src.jsLib, jsLibBindings)
         val hits = ArrayList<SearchHit>()
