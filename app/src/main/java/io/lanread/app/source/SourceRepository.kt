@@ -49,6 +49,10 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
     private val sourceDao get() = db.sourceDao()
     private val bookDao get() = db.bookDao()
 
+    /** 最近一次空结果的原因（explorePage 写，UI 读拼提示） */
+    @Volatile
+    var lastEmptyReason: String? = null
+
     private val jsLibBindings: Map<String, Any>
         get() {
             appCtx?.let { LanJs.ensure(it) }
@@ -220,8 +224,8 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         if (raw.trim().startsWith("@js:")) {
             // 动态标签：执行 JS（jsLib 前置），返回 JSON 数组
             val js = raw.trim().removePrefix("@js:")
-            val vars = mapOf("baseUrl" to se.url, "page" to "1")
-            val ret = Analyzer.runJs(js, vars, src.jsLib, jsLibBindings)
+            val ret = Analyzer.runJs(js, mapOf("baseUrl" to se.url, "page" to "1"), src.jsLib, jsLibBindings)
+            if (ret.isNullOrBlank()) lastEmptyReason = "exploreUrl 脚本无返回（jsLib 执行失败或被沙箱拦截）"
             ExploreUrlParser.parseDynamicJson(ret)
         } else {
             ExploreUrlParser.parseStatic(raw)
@@ -297,9 +301,11 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val ctx: Analyzer.Ctx = if (!rules.init.isNullOrBlank()) {
             val initOut = Analyzer.getString(rules.init, Analyzer.Ctx(""), vars, src.jsLib, jsLibBindings)
             if (!initOut.isNullOrBlank()) Analyzer.Ctx(initOut)
-            else Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl), bookUrl))
+            else runCatching { Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl), bookUrl)) }
+                .getOrElse { Analyzer.Ctx("") }
         } else {
-            Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl), bookUrl))
+            runCatching { Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl), bookUrl)) }
+                .getOrElse { Analyzer.Ctx("") }
         }
 
         fun f(rule: String?): String =
@@ -327,7 +333,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val items = if (chapterListRule.trim().startsWith("<js>")) {
             Analyzer.getItems("", tocUrl, chapterListRule, vars, src.jsLib, jsLibBindings)
         } else {
-            val body = Http.get(tocUrl)
+            val body = runCatching { Http.get(tocUrl) }.getOrElse { "" }
             Analyzer.getItems(body, tocUrl, chapterListRule, vars, src.jsLib, jsLibBindings)
         }
         val list = ArrayList<Chapter>()
@@ -355,7 +361,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val result: String? = if (rule.trim().startsWith("<js>")) {
             Analyzer.getString(rule, Analyzer.Ctx(""), vars, src.jsLib, jsLibBindings)
         } else {
-            val body = Http.get(chapterUrl)
+            val body = runCatching { Http.get(chapterUrl) }.getOrElse { "" }
             val ctx = if (body.trimStart().startsWith("{") || body.trimStart().startsWith("[")) {
                 Analyzer.Ctx(body)
             } else {

@@ -141,7 +141,11 @@ class ExploreViewModel(app: android.app.Application) : AndroidViewModel(app) {
             val list = repo.explorePage(sid, entry.url, page)
             hits = list
             loading = false
-            if (list.isEmpty()) message = "本页没有内容（规则不适用、站点不可达或已到末页）"
+            if (list.isEmpty()) {
+                val reason = repo.lastEmptyReason
+                message = if (reason != null) "本页没有内容：$reason"
+                else "本页没有内容（规则不适用、站点不可达或已到末页）"
+            }
         }
     }
 }

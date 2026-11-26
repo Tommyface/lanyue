@@ -153,7 +153,11 @@ class RssViewModel(app: android.app.Application) : AndroidViewModel(app) {
             val list = repo.loadGroup(sid, groupIndex, page)
             articles = list
             loading = false
-            if (list.isEmpty()) message = "本页没有文章（分组规则不适用、站点不可达或已到末页）"
+            if (list.isEmpty()) {
+                val reason = repo.lastEmptyReason
+                message = if (reason != null) "本页没有文章：$reason"
+                else "本页没有文章（分组规则不适用、站点不可达或已到末页）"
+            }
         }
     }
 

@@ -14,6 +14,10 @@ class RssRepository(
 ) {
     private val rssDao get() = db.rssSourceDao()
 
+    /** 最近一次空页原因（loadGroup 写，UI 读拼提示） */
+    @Volatile
+    var lastEmptyReason: String? = null
+
     fun sourcesFlow() = rssDao.all()
 
     // ---------------- 导入 ----------------
@@ -118,7 +122,13 @@ class RssRepository(
         val bindings = LanJs.bindings()
         val url = Analyzer.evalTemplate(g.urlTemplate, Analyzer.Ctx(""), vars, src.jsLib, bindings)
 
-        val body = runCatching { Http.get(url) }.getOrElse { return@withContext emptyList() }
+        lastEmptyReason = null
+        val body = try {
+            Http.get(url)
+        } catch (e: Exception) {
+            lastEmptyReason = "站点不可达（${e.message?.take(80) ?: e.javaClass.simpleName}）"
+            ""
+        }
         val items = Analyzer.getItems(body, se.url, src.ruleArticles)
         val out = ArrayList<Article>(items.size)
         for (item in items) {
