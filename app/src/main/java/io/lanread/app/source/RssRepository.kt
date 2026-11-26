@@ -123,8 +123,9 @@ class RssRepository(
         val url = Analyzer.evalTemplate(g.urlTemplate, Analyzer.Ctx(""), vars, src.jsLib, bindings)
 
         lastEmptyReason = null
+        val srcHeaders = Http.parseHeaders(src.header)
         val body = try {
-            Http.get(url, se.url)
+            Http.get(url, se.url, srcHeaders)
         } catch (e: Exception) {
             lastEmptyReason = "站点不可达（${e.message?.take(80) ?: e.javaClass.simpleName}）"
             ""

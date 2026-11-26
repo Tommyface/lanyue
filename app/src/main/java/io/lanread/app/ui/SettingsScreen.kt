@@ -10,11 +10,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -26,6 +28,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,6 +38,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -47,6 +51,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavController
 import io.lanread.app.data.AppDatabase
 import io.lanread.app.data.Prefs
+import io.lanread.app.LanApp
 import io.lanread.app.source.BackupRepository
 import io.lanread.app.source.WebDav
 import kotlinx.coroutines.Dispatchers
@@ -122,6 +127,7 @@ fun SettingsScreen(nav: NavController) {
     val url = remember { mutableStateOf(Prefs.webdavUrl(context)) }
     val user = remember { mutableStateOf(Prefs.webdavUser(context)) }
     val pass = remember { mutableStateOf(Prefs.webdavPass(context)) }
+    var crashLogOpen by remember { mutableStateOf(false) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -256,6 +262,21 @@ fun SettingsScreen(nav: NavController) {
             }
 
             Spacer(Modifier.height(20.dp))
+            Text("诊断", fontSize = 16.sp, fontFamily = LanType.Display, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "应用闪退会自动记录堆栈（保留最近 5 份）；反馈问题时点开截图即可定位。",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    crashLogOpen = true
+                }) { Text("查看最近崩溃日志") }
+            }
+
+            Spacer(Modifier.height(20.dp))
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -286,5 +307,41 @@ fun SettingsScreen(nav: NavController) {
             }
             Spacer(Modifier.height(32.dp))
         }
+    }
+
+    if (crashLogOpen) {
+        val log = remember { LanApp.latestCrashLog(context) }
+        AlertDialog(
+            onDismissRequest = { crashLogOpen = false },
+            title = { Text("最近崩溃日志") },
+            text = {
+                if (log.isNullOrBlank()) {
+                    Text("暂无崩溃记录。")
+                } else {
+                    Text(
+                        log.take(6000),
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        lineHeight = 15.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState())
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (!log.isNullOrBlank()) {
+                        val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                as? android.content.ClipboardManager
+                        cm?.setPrimaryClip(
+                            android.content.ClipData.newPlainText("crash", log.take(20000))
+                        )
+                    }
+                    crashLogOpen = false
+                }) { Text(if (log.isNullOrBlank()) "关闭" else "复制并关闭") }
+            }
+        )
     }
 }

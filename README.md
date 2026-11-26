@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.8
+# 澜阅 LanRead v0.4.9
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -31,7 +31,7 @@
 - **阅读主题**：纸 / 宣 / 竹 / 夜
 - **图标**：宣纸底 + 墨青书脊 + 澜水波
 
-## 功能（v0.4.8）
+## 功能（v0.4.9）
 
 1. **书架**：本地 TXT 导入（SAF）、在线书籍收藏、长按移除、阅读进度自动保存
 2. **书源管理**：粘贴 JSON / URL 导入 Legado 书源、启停、删除、按 URL 去重
@@ -99,7 +99,12 @@
     - **JS 沙箱改黑名单制**：前缀白名单枚举不完 Android 系统实现类（真机 HttpURLConnection 实现是 com.android.okhttp.*，TLS 在 conscrypt，socket 走 libcore.io）——一漏网络就全挂。现仅拒绝 Runtime/ProcessBuilder/Process/ClassLoader/SecurityManager 与 dalvik.system.*（动态加载），其余放行（书源 JS 本就由用户自行导入，README 已声明风险自担）
     - **相对 URL 全链路补全**（Http.absUrl）：源内 sortUrl/bookUrl/入口 URL 为相对路径（如 /yuedu/...）时自动拼上源地址，不再抛 Expected URL scheme
     - discoverPage 入口请求失败降级 + 原因透出修复上一版未落地的漏洞；SearchHit.bookUrl/coverUrl 与入书架前均补全
-   18. **兼容的 Legado 书源规则子集**：
+   18. **稳定性与网络兼容（v0.4.9，真机反馈）**：
+    - **全局崩溃日志**：未捕获异常堆栈自动落盘（files/crash/，保留最近 5 份），设置页「诊断 → 查看最近崩溃日志」可查看与复制——真机闪退不再盲修
+    - **列表去重**：搜索/发现页结果、目录章节均按 URL 去重，消除 Compose key 冲突闪退（同页重复书籍/重复章节时必崩）
+    - **HTTP/1.1 + 连接级重试**：部分 CDN/防护对 HTTP/2 或非浏览器 TLS 指纹直接 RST（真机 Connection reset），强制 1.1 并自动重试一次
+    - **源 header 字段实现**：书源/订阅源自带请求头（UA/Referer 等）现随源请求发出，反爬场景不再裸连
+   19. **兼容的 Legado 书源规则子集**：
    - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
    - `$.` / `@json:` / `[` 开头的 JSONPath
    - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值）
@@ -150,6 +155,7 @@ powershell -File D:\lanread-build\build.ps1 release    # 仅 release
 - [x] 沙箱白名单扩容 + baseUrl 实际 URL + 搜索限时（v0.4.6，漫蛙源全链路修复）
 - [x] 发现页/订阅源列表 Http 降级 + 空页原因透出（v0.4.7，漫蛙 API 拒绝裸 GET 的 501 场景）
 - [x] 沙箱改黑名单制 + 相对 URL 全链路补全（v0.4.8，真机 com.android.okhttp 拦截与 /yuedu 相对路径）
+- [x] 崩溃日志落盘 + 列表去重 + HTTP/1.1 重试 + 源 header 支持（v0.4.9）
 - [ ] M2d：WorkManager 定时追更提醒
 - [ ] M3：EPUB 支持、插件仓库协议
 

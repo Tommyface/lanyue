@@ -15,6 +15,7 @@ data class RssSource(
     val sourceUrl: String = "",
     val sourceGroup: String? = null,
     val sourceIcon: String? = null,
+    val header: String? = null,        // 源自定义请求头（JSON 字符串）
     val sortUrl: String? = null,          // 分组入口：每行 "名称::URL"
     val articleStyle: Int? = null,        // 0=纯文本 1=自定义HTML
     val enableJs: Boolean? = null,

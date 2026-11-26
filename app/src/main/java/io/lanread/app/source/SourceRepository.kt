@@ -147,6 +147,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         // Legado 标准把 searchUrl 放在顶层（ruleSearch.searchUrl 为旧兼容）
         val searchUrl = src.searchUrl ?: rules.searchUrl ?: return emptyList()
         val isComic = (src.bookSourceType ?: 0) == 2
+        val srcHeaders = Http.parseHeaders(src.header)
         val keyEnc = URLEncoder.encode(keyword, "UTF-8")
         val tplVars = mapOf(
             "key" to keyEnc,
@@ -161,7 +162,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         // （漫蛙等源的 bookList 脚本从 baseUrl 里提取 k=/page= 参数）
         val vars = tplVars + mapOf("baseUrl" to url)
         // 模板化 URL（{{Url()}} 动态线路）请求失败不致命：bookList 的 JS 通常自行请求
-        val body = runCatching { Http.get(url, se.url) }.getOrElse { "" }
+        val body = runCatching { Http.get(url, se.url, srcHeaders) }.getOrElse { "" }
         // 列表规则（<js>$.list 两段式 / CSS / JSONPath）
         val items = Analyzer.getItems(body, se.url, rules.bookList, vars, src.jsLib, jsLibBindings)
         val hits = ArrayList<SearchHit>()
@@ -183,7 +184,8 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
                 )
             )
         }
-        return hits
+        // 去重：同源同书重复出现时避免列表 key 冲突闪退（Compose 要求 key 唯一）
+        return hits.distinctBy { it.sourceId to it.bookUrl }
     }
 
     /** 入书架结果：existed=true 表示书架上已有（返回既有书 id，未重复入库） */
@@ -247,6 +249,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val src = BookSourceParser.parseSingle(se.json) ?: return@withContext emptyList()
         val rules = src.ruleExplore ?: return@withContext emptyList()
         val isComic = (src.bookSourceType ?: 0) == 2
+        val srcHeaders = Http.parseHeaders(src.header)
         val tplVars = mapOf("page" to page.toString(), "baseUrl" to se.url)
         val url = Analyzer.evalTemplate(
             entryUrlTemplate, Analyzer.Ctx(""), tplVars, src.jsLib, jsLibBindings
@@ -254,7 +257,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         // 同搜索：规则阶段的 baseUrl 为实际分页 URL（漫娃脚本从中提取 /api/… path 与 tag）
         val vars = tplVars + mapOf("baseUrl" to url)
         val body = try {
-            Http.get(url, se.url)
+            Http.get(url, se.url, srcHeaders)
         } catch (e: Exception) {
             lastEmptyReason = "入口页请求失败（${e.message?.take(80) ?: e.javaClass.simpleName}），若列表规则含 JS 可自愈"
             ""
@@ -279,7 +282,8 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
                 )
             )
         }
-        hits
+        // 去重：同源同书重复出现时避免列表 key 冲突闪退（Compose 要求 key 唯一）
+        hits.distinctBy { it.sourceId to it.bookUrl }
     }
 
     /** 发现页可用的启用书源（有 exploreUrl 且 enabledExplore 非 false） */
@@ -304,15 +308,16 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val src = BookSourceParser.parseSingle(se.json) ?: return@withContext null
         val rules = src.ruleBookInfo ?: return@withContext null
         val vars = mapOf("baseUrl" to bookUrl, "page" to "1")
+        val srcHeaders = Http.parseHeaders(src.header)
 
         // init 规则：执行 JS 得 JSON（对象或字符串），作为字段求值上下文
         val ctx: Analyzer.Ctx = if (!rules.init.isNullOrBlank()) {
             val initOut = Analyzer.getString(rules.init, Analyzer.Ctx(""), vars, src.jsLib, jsLibBindings)
             if (!initOut.isNullOrBlank()) Analyzer.Ctx(initOut)
-            else runCatching { Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl, se.url), bookUrl)) }
+            else runCatching { Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl, se.url, srcHeaders), bookUrl)) }
                 .getOrElse { Analyzer.Ctx("") }
         } else {
-            runCatching { Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl, se.url), bookUrl)) }
+            runCatching { Analyzer.Ctx(Jsoup.parse(Http.get(bookUrl, se.url, srcHeaders), bookUrl)) }
                 .getOrElse { Analyzer.Ctx("") }
         }
 
@@ -335,13 +340,14 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val src = BookSourceParser.parseSingle(se.json) ?: return@withContext emptyList()
         val rules = src.ruleToc ?: return@withContext emptyList()
         val vars = mapOf("baseUrl" to tocUrl, "page" to "1")
+        val srcHeaders = Http.parseHeaders(src.header)
 
         // chapterList 可能是 <js>...</js>\n$.list 两段式（不需要先抓页面）
         val chapterListRule = rules.chapterList ?: return@withContext emptyList()
         val items = if (chapterListRule.trim().startsWith("<js>")) {
             Analyzer.getItems("", tocUrl, chapterListRule, vars, src.jsLib, jsLibBindings)
         } else {
-            val body = runCatching { Http.get(tocUrl, se.url) }.getOrElse { "" }
+            val body = runCatching { Http.get(tocUrl, se.url, srcHeaders) }.getOrElse { "" }
             Analyzer.getItems(body, tocUrl, chapterListRule, vars, src.jsLib, jsLibBindings)
         }
         val list = ArrayList<Chapter>()
@@ -352,7 +358,8 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
                 ?: "第${list.size + 1}节"
             list.add(Chapter(list.size, title, cu))
         }
-        list
+        // 去重：章节数据含重复链接时避免列表 key 冲突闪退
+        list.distinctBy { it.url }
     }
 
     /**
@@ -365,11 +372,12 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val src = BookSourceParser.parseSingle(se.json) ?: return@withContext ""
         val rule = src.ruleContent?.content ?: return@withContext ""
         val vars = mapOf("baseUrl" to chapterUrl, "page" to "1")
+        val srcHeaders = Http.parseHeaders(src.header)
 
         val result: String? = if (rule.trim().startsWith("<js>")) {
             Analyzer.getString(rule, Analyzer.Ctx(""), vars, src.jsLib, jsLibBindings)
         } else {
-            val body = runCatching { Http.get(chapterUrl, se.url) }.getOrElse { "" }
+            val body = runCatching { Http.get(chapterUrl, se.url, srcHeaders) }.getOrElse { "" }
             val ctx = if (body.trimStart().startsWith("{") || body.trimStart().startsWith("[")) {
                 Analyzer.Ctx(body)
             } else {
