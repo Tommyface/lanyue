@@ -98,6 +98,13 @@ class RssViewModel(app: android.app.Application) : AndroidViewModel(app) {
         private set
     var importing by mutableStateOf(false)
 
+    /** v0.4.20：该订阅源是否视频类（带 ruleContent 自绘播放器） */
+    fun isVideoSource(id: Long): Boolean {
+        val list = sources.value ?: return false
+        val se = list.firstOrNull { it.id == id } ?: return false
+        return RssSourceParser.parseSingle(se.json)?.ruleContent?.isNotBlank() == true
+    }
+
     // ---------- 源变量（与书源共享 LanJs 全局桥） ----------
     var vars by mutableStateOf<Map<String, String?>>(emptyMap())
         private set
@@ -332,6 +339,8 @@ fun RssScreen(nav: NavController) {
                             onClick = {
                                 RssSession.articles = vm.articles
                                 RssSession.title = activeSource.name
+                                RssSession.sourceId = activeSource.id
+                                RssSession.isVideo = vm.isVideoSource(activeSource.id)
                                 nav.navigate("rssArticle/$i")
                             },
                             modifier = Modifier.fillMaxWidth(),

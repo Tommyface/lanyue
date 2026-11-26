@@ -2,6 +2,7 @@ package io.lanread.app.ui
 
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -15,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +46,10 @@ class RssArticleViewModel(app: android.app.Application) : AndroidViewModel(app) 
 
     suspend fun importAuto(url: String): String =
         withContext(Dispatchers.IO) { rssRepo.importAuto(url) }
+
+    /** v0.4.20：视频详情页（ruleContent 执行产出播放器 HTML）；非视频源/失败返回 null */
+    suspend fun videoPage(sourceId: Long, link: String): String? =
+        rssRepo.videoArticle(sourceId, link)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -60,6 +66,9 @@ fun RssArticleScreen(nav: NavController, index: Int) {
     val article = articles.getOrNull(index)
     var importMsg by remember { mutableStateOf<String?>(null) }
     var importing by remember { mutableStateOf(false) }
+    // v0.4.20：视频源播放器页（ruleContent 产物）——null 则走 article.html
+    var playerHtml by remember { mutableStateOf<String?>(null) }
+    var playerLoading by remember { mutableStateOf(RssSession.isVideo) }
 
     Scaffold(
         topBar = {
@@ -106,6 +115,21 @@ fun RssArticleScreen(nav: NavController, index: Int) {
                 fontSize = 14.sp
             )
         } else {
+            // 视频源：拉原网页执行 ruleContent 产播放器页（一次）
+            LaunchedEffect(article.link, RssSession.isVideo) {
+                if (RssSession.isVideo && playerHtml == null) {
+                    playerHtml = runCatching {
+                        vm.videoPage(RssSession.sourceId, article.link)
+                    }.getOrNull()
+                    playerLoading = false
+                }
+            }
+            val pageHtml = if (RssSession.isVideo) (playerHtml ?: article.html) else article.html
+            if (playerLoading) {
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                    androidx.compose.material3.CircularProgressIndicator()
+                }
+            } else {
             AndroidView(
                 modifier = Modifier
                     .fillMaxSize()
@@ -116,6 +140,11 @@ fun RssArticleScreen(nav: NavController, index: Int) {
                         settings.domStorageEnabled = true
                         settings.loadWithOverviewMode = true
                         settings.useWideViewPort = true
+                        settings.mediaPlaybackRequiresUserGesture = false
+                        // v0.4.20：注入 source JS 桥（视频源播放器轮询 source.get("hijacked_video_url"）
+                        addJavascriptInterface(
+                            SourceJsBridge(), "source"
+                        )
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(
                                 view: WebView,
@@ -133,9 +162,10 @@ fun RssArticleScreen(nav: NavController, index: Int) {
                     }
                 },
                 update = { wv ->
-                    wv.loadDataWithBaseURL(null, article.html, "text/html", "utf-8", null)
+                    wv.loadDataWithBaseURL(null, pageHtml, "text/html", "utf-8", null)
                 }
             )
+            }
         }
     }
 
@@ -148,5 +178,20 @@ fun RssArticleScreen(nav: NavController, index: Int) {
                 TextButton(onClick = { importMsg = null }) { Text("好") }
             }
         )
+    }
+}
+
+/**
+ * v0.4.20 WebView JS 桥：视频源播放器页轮询 source.get("hijacked_video_url")。
+ * 与 LanJs.source 全局桥同存储（jsLib 执行 source.put 写入 → WebView 播放器轮询读取）。
+ */
+class SourceJsBridge {
+    @android.webkit.JavascriptInterface
+    fun get(key: String?): String =
+        io.lanread.app.source.LanJs.source.get(key) ?: ""
+
+    @android.webkit.JavascriptInterface
+    fun put(key: String?, value: String?) {
+        io.lanread.app.source.LanJs.source.put(key, value)
     }
 }

@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.19
+# 澜阅 LanRead v0.4.20
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -140,7 +140,11 @@
    27. **图片解密（v0.4.19）**：
     - **ruleContent.imageDecode 实现**：`java.createSymmetricCrypto("aes/cbc/pkcs7padding", key, iv).decrypt(result)` Legado 同名 API（JsExt 实现 AES/CBC/ECB 家族，密钥即 IV）；
     - **漫画解密管线**：图片逐张下载（图片专用 OkHttp：UA/自签证书/HTTP1.1）→ imageDecode JS 解密 → 临时文件 → file:// 显示；解密失败回退原始 URL
-   28. **兼容的 Legado 书源规则子集**：
+   28. **视频订阅源（v0.4.20）**：
+    - **ruleContent 播放器页**：视频类订阅源（933 国产黑料型）文章点击时拉原网页执行 ruleContent，产出自绘 hls.js 播放器页
+    - **WebView source JS 桥**：注入 source.get/put（与 LanJs 全局桥同存储），播放器页轮询 source.get("hijacked_video_url") 取真实视频流
+    - RssSource 模型补 ruleContent/ruleImage/searchUrl 字段；视频源文章加载中态与失败回退（原网页直接渲染）
+   29. **兼容的 Legado 书源规则子集**：
    - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
    - `$.` / `@json:` / `[` 开头的 JSONPath
    - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值）

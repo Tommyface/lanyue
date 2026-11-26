@@ -6,4 +6,7 @@ import io.lanread.app.source.RssRepository
 object RssSession {
     var articles: List<RssRepository.Article> = emptyList()
     var title: String = ""
+    /** v0.4.20：视频订阅源（带 ruleContent），文章页执行播放器规则用 */
+    var sourceId: Long = -1L
+    var isVideo: Boolean = false
 }

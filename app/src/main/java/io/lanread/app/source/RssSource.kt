@@ -26,6 +26,9 @@ data class RssSource(
     val ruleLink: String? = null,
     val rulePubDate: String? = null,
     val ruleDescription: String? = null, // 正文模板（可含 {{规则}}/{{JS}}）
+    val ruleContent: String? = null,     // v0.4.20：详情页内容规则（视频源自绘播放器 HTML）
+    val ruleImage: String? = null,        // v0.4.20：列表封面规则
+    val searchUrl: String? = null,        // v0.4.20：搜索 URL（视频订阅源搜索）
     val ruleNextPage: String? = null,
     val enabled: Boolean? = null,
     val singleUrl: Boolean? = null,

@@ -218,4 +218,28 @@ class RssRepository(
             append("</body></html>")
         }
     }
+
+    // ---------------- v0.4.20 视频订阅源 ----------------
+
+    /**
+     * 视频详情页内容（ruleContent）：拉取条目原网页 HTML，在其上下文执行 ruleContent
+     * （视频源自绘播放器页，如 933 国产黑料：hls.js 播放器 + source.get 轮询注入）。
+     * 失败回退普通 WebView 直接加载原网页。
+     */
+    suspend fun videoArticle(sourceId: Long, link: String): String? = withContext(Dispatchers.IO) {
+        LanJs.ensure(appCtx)
+        val se = rssDao.byId(sourceId) ?: return@withContext null
+        val src = RssSourceParser.parseSingle(se.json) ?: return@withContext null
+        val rule = src.ruleContent ?: return@withContext null
+        val headers = Http.parseHeaders(src.header)
+        val absLink = Http.absUrl(se.url, link)
+        val body = runCatching { Http.get(absLink, se.url, headers) }.getOrNull() ?: return@withContext null
+        val vars = mapOf("baseUrl" to absLink, "page" to "1", "result" to body)
+        // ruleContent 整段执行（@js:/<js> 短路已内置），result 变量注入原网页 HTML
+        val html = Analyzer.getString(rule, Analyzer.Ctx(body), vars, src.jsLib, LanJs.bindings())
+        html?.takeIf { it.isNotBlank() }
+    }
+
+    /** 视频列表条目封面（ruleImage）：Article 无封面字段，暂供 UI 后续扩展 */
+    fun articleImageRule(src: RssSource): String? = src.ruleImage
 }
