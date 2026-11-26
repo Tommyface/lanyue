@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.10
+# 澜阅 LanRead v0.4.11
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -31,7 +31,7 @@
 - **阅读主题**：纸 / 宣 / 竹 / 夜
 - **图标**：宣纸底 + 墨青书脊 + 澜水波
 
-## 功能（v0.4.10）
+## 功能（v0.4.11）
 
 1. **书架**：本地 TXT 导入（SAF）、在线书籍收藏、长按移除、阅读进度自动保存
 2. **书源管理**：粘贴 JSON / URL 导入 Legado 书源、启停、删除、按 URL 去重
@@ -107,7 +107,11 @@
    19. **ES6 语法与 JSON 上下文提取修复（v0.4.10，真机反馈）**：
     - **Rhino 开 ES6 语言版本**：yck 等源 jsLib 用 `const { java, cache } = this` 解构赋值，ES5 解析直接报 missing : after property id → bhost() 无法执行 → URL 回退到已死域名 → “站点不可达(Connection reset)”。实测 ES6 版本下 bhost() 完整跑通并测速选出活镜像（yck.email）
     - **JSON 字符串上下文的裸字段名提取**：ruleBookInfo.init 的 JS 返回 JSON 字符串时，name/author/coverUrl/tocUrl 等裸字段名此前全部提取失败（只支持 Map/List 上下文）→ tocUrl 回退到详情 URL（无 book_id）→ 漫蛙目录为空的直接根因。现 String 且以 { 或 [ 开头自动按 $.key 解析
-   20. **兼容的 Legado 书源规则子集**：
+   20. **列表卡片重设计 + 图片加载器（v0.4.11）**：
+    - 发现页/搜索结果卡片按主流阅读器样式重设计：方形圆角封面（裁剪填充）、标题、作者行、**连载状态标签**（kind 首段：红系“连载中”/主色系“完结”）、两行简介
+    - SearchHit 新增 kind 提取（ruleExplore/ruleSearch 的 kind 字段，$$ 分隔连载状态与分类）
+    - **Coil 全局图片加载器**：专用 OkHttp（HTTP/1.1 + 浏览器 UA + 信任自签证书）——书源图床常为 IP 直链自签证书（如漫蛙 52.128.242.34:20608），默认主机名校验必失败；图片仅显示不执行，按 Legado 同等策略
+   21. **兼容的 Legado 书源规则子集**：
    - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
    - `$.` / `@json:` / `[` 开头的 JSONPath
    - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值）
@@ -160,6 +164,7 @@ powershell -File D:\lanread-build\build.ps1 release    # 仅 release
 - [x] 沙箱改黑名单制 + 相对 URL 全链路补全（v0.4.8，真机 com.android.okhttp 拦截与 /yuedu 相对路径）
 - [x] 崩溃日志落盘 + 列表去重 + HTTP/1.1 重试 + 源 header 支持（v0.4.9）
 - [x] Rhino ES6 语言版本（解构赋值）+ JSON 字符串裸字段名提取（v0.4.10，漫蛙目录为空与 yck Connection reset 根因）
+- [x] 卡片重设计（状态标签/简介/方圆角封面）+ Coil 图片加载器（v0.4.11）
 - [ ] M2d：WorkManager 定时追更提醒
 - [ ] M3：EPUB 支持、插件仓库协议
 

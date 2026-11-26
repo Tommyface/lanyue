@@ -123,7 +123,8 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val coverUrl: String = "",
         val latestChapter: String = "",
         val intro: String = "",
-        val isComic: Boolean = false     // bookSourceType == 2
+        val isComic: Boolean = false,    // bookSourceType == 2
+        val kind: String = ""           // 连载状态/分类（如 "连载中$$韩漫"，$$ 分隔）
     )
 
     suspend fun searchAll(keyword: String): List<SearchHit> = withContext(Dispatchers.IO) {
@@ -180,6 +181,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
                     coverUrl = Http.absUrl(se.url, Analyzer.getString(rules.coverUrl, item, vars, src.jsLib, jsLibBindings)?.trim() ?: ""),
                     latestChapter = Analyzer.getString(rules.lastChapter, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
                     intro = Analyzer.getString(rules.intro, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
+                    kind = Analyzer.getString(rules.kind, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
                     isComic = isComic
                 )
             )
@@ -278,6 +280,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
                     coverUrl = Http.absUrl(se.url, Analyzer.getString(rules.coverUrl, item, vars, src.jsLib, jsLibBindings)?.trim() ?: ""),
                     latestChapter = Analyzer.getString(rules.lastChapter, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
                     intro = Analyzer.getString(rules.intro, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
+                    kind = Analyzer.getString(rules.kind, item, vars, src.jsLib, jsLibBindings)?.trim() ?: "",
                     isComic = isComic
                 )
             )

@@ -45,6 +45,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -313,33 +315,33 @@ private fun ExploreCard(hit: SourceRepository.SearchHit, onClick: () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Row(Modifier.padding(10.dp)) {
-            // 封面：无 coverUrl 或加载失败时显示书名首字底纹
+        Row(Modifier.padding(12.dp)) {
+            // 方形圆角封面（图 1 样式）：无封面或加载失败回退书名首字底纹
             Box(
                 Modifier
-                    .width(64.dp)
-                    .height(86.dp)
-                    .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.small),
+                    .width(78.dp)
+                    .height(78.dp)
+                    .clip(MaterialTheme.shapes.small)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
                 if (hit.coverUrl.isNotBlank()) {
                     coil.compose.AsyncImage(
                         model = hit.coverUrl,
                         contentDescription = "封面",
-                        modifier = Modifier
-                            .width(64.dp)
-                            .height(86.dp)
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
                     )
                 } else {
                     Text(
                         hit.title.take(1),
                         fontFamily = LanType.Display,
-                        fontSize = 22.sp,
+                        fontSize = 28.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     hit.title,
@@ -350,21 +352,27 @@ private fun ExploreCard(hit: SourceRepository.SearchHit, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    hit.author.ifBlank { "佚名" },
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (hit.latestChapter.isNotBlank()) {
-                    Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        hit.latestChapter,
-                        fontSize = 10.sp,
+                        "作者：" + hit.author.ifBlank { "佚名" },
+                        fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    StatusTag(hit.kind)
+                }
+                if (hit.intro.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        hit.intro,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                 }

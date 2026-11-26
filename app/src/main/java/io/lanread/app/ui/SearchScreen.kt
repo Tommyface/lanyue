@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -256,18 +257,34 @@ private fun SearchHitCard(hit: SourceRepository.SearchHit, onClick: () -> Unit) 
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                buildString {
-                    append(hit.author.ifBlank { "佚名" })
-                    if (hit.latestChapter.isNotBlank()) append(" · ").append(hit.latestChapter)
-                    append(" · 来自 ").append(hit.sourceName)
-                },
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    buildString {
+                        append(hit.author.ifBlank { "佚名" })
+                        if (hit.latestChapter.isNotBlank()) append(" · ").append(hit.latestChapter)
+                        append(" · 来自 ").append(hit.sourceName)
+                    },
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                Spacer(Modifier.width(6.dp))
+                StatusTag(hit.kind)
+            }
+            if (hit.intro.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    hit.intro,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
     }
 }
