@@ -40,7 +40,8 @@ object LanJs {
     fun bindings(): Map<String, Any> = mapOf(
         "java" to java,
         "cache" to cache,
-        "source" to source
+        "source" to source,
+        "cookie" to Analyzer.JsCookie()
     )
 }
 
@@ -167,7 +168,9 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
             "searchKey" to keyword,
             "page" to "1",
             "baseUrl" to se.url,
-            "host" to se.url
+            "host" to se.url,
+            // v0.4.24：书源 URL 井号后的备用地址（source.getKey()/source.key 族源的真实搜索域）
+            "bookSourceKey" to se.url.substringAfter("#").ifBlank { se.url }
         )
         val url = Analyzer.evalTemplate(
             searchUrl, Analyzer.Ctx(""), tplVars, src.jsLib, jsLibBindings
@@ -277,7 +280,7 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val rules = src.ruleExplore ?: return@withContext emptyList()
         val isComic = (src.bookSourceType ?: 0) == 2
         val srcHeaders = Http.parseHeaders(src.header)
-        val tplVars = mapOf("page" to page.toString(), "baseUrl" to se.url)
+        val tplVars = mapOf("page" to page.toString(), "baseUrl" to se.url, "bookSourceKey" to se.url.substringAfter("#").ifBlank { se.url })
         val url = Analyzer.evalTemplate(
             entryUrlTemplate, Analyzer.Ctx(""), tplVars, src.jsLib, jsLibBindings
         )

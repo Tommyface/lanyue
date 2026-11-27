@@ -131,10 +131,45 @@ object Analyzer {
             }
         }
 
-        /** OmoFun 的 r.body() 调用形态（connect 返回值链式取体） */
+        /**
+         * v0.4.24：java.get(urlStr, options)——无忧书城族写法 `java.get(su,{}).headers('Location')`：
+         * 返回 Response 包装（headers(name)/body()）。options 兼容 JS 对象/JSON 字符串/空。
+         * 与存量 get(k)（变量存取）同名重载：Rhino 按参数个数分发，单参为存取、双参为 HTTP。
+         */
+        fun get(url: String?, options: Any?): ResponseWrap? {
+            if (url.isNullOrBlank()) return null
+            val hs = headersToMap(options)
+            val opts = Http.ReqOpts(method = "GET", headers = hs)
+            return try {
+                ResponseWrap(Http.get(url, null, null, opts))
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        /** OmoFun 的 r.body() 调用形态（connect/get 返回值链式取体）；headers(name) 供重定向读取 */
         class ResponseWrap(private val bodyStr: String) {
             fun body(): String = bodyStr
+            fun headers(name: String?): String? =
+                if (name == null) null else
+                    (Http.lastHeaders[name] ?: Http.lastHeaders[name.lowercase()])?.firstOrNull()
             override fun toString(): String = bodyStr
+        }
+
+        /** 设备标识（1336 合集里源拼签名用）——固定值，不暴露真机信息 */
+        fun androidId(): String = "lanread0000device"
+        fun deviceID(imei: String?): String = "86${(imei ?: "").hashCode().toLong().let { if (it < 0) -it else it }}"
+
+        /** v0.4.24：DESede（3DES）加密——245 集综合源的 token 签名 */
+        fun tripleDESEncodeBase64(data: String?, key: String?): String? {
+            if (data == null || key == null) return null
+            return runCatching {
+                val des = javax.crypto.spec.DESedeKeySpec(key.toByteArray(Charsets.UTF_8))
+                val factory = javax.crypto.SecretKeyFactory.getInstance("DESede")
+                val cipher = javax.crypto.Cipher.getInstance("DESede/ECB/PKCS5Padding")
+                cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, factory.generateSecret(des))
+                android.util.Base64.encodeToString(cipher.doFinal(data.toByteArray(Charsets.UTF_8)), android.util.Base64.NO_WRAP)
+            }.getOrNull()
         }
 
         /** JS 传入的 headers（NativeJavaObject/Map/JSON 字符串）→ Map */
@@ -304,6 +339,35 @@ object Analyzer {
             /** 解密为字符串（OmoFun 视频播放地址：c.decryptStr(cipher)） */
             fun decryptStr(data: Any?): String? = decrypt(data)?.toString(Charsets.UTF_8)
 
+            /** v0.4.24：加密（点众阅读族 c.encrypt(JSON.stringify(data)) → 返回 ByteArray） */
+            fun encrypt(data: Any?): ByteArray? = encryptBytes(
+                when (data) {
+                    null -> null
+                    is ByteArray -> data
+                    else -> data.toString().toByteArray(Charsets.UTF_8)
+                }
+            )
+
+            fun encryptBytes(data: ByteArray?): ByteArray? {
+                if (data == null || data.isEmpty()) return null
+                return try {
+                    val t = transformation.replace("pkcs7padding", "pkcs5padding")
+                    val cipher = javax.crypto.Cipher.getInstance(t)
+                    val sks = javax.crypto.spec.SecretKeySpec(key, t.substringBefore('/').uppercase())
+                    when (t.substringAfter('/').substringBefore('/')) {
+                        "cbc", "cfb", "ofb", "ctr" -> {
+                            val ivx = ByteArray(16) { if (it < iv.size && it < 16) iv[it] else 0 }
+                            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, sks, javax.crypto.spec.IvParameterSpec(ivx))
+                        }
+                        else -> cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, sks)
+                    }
+                    val out = cipher.doFinal(data)
+                    if (out != null && out.isNotEmpty()) out else null
+                } catch (e: Exception) {
+                    null
+                }
+            }
+
             fun decryptBytes(data: ByteArray?): ByteArray? {
                 if (data == null || data.isEmpty()) return null
                 return try {
@@ -351,6 +415,22 @@ object Analyzer {
             if (k != null) store[k] = v
         }
         fun get(k: String?): String? = k?.let { store[it] }
+
+        /** v0.4.24：source.getKey()/source.key——书源 URL 井号后的备用地址（Legado 语义）。
+         *  无忧/网书/夜寒等源 searchUrl 以 source.key 为真实搜索域（书源 URL 是展示壳）。 */
+        fun getKey(): String = store["key"] ?: keyFallback
+        fun setKey(v: String) { store["key"] = v }
+
+        /** key 兜底：从 baseUrl 变量提取 # 后段（searchOne 阶段已注入 key） */
+        private val keyFallback: String
+            get() = currentRuleEval.get()?.vars?.get("bookSourceKey") as? String ?: ""
+    }
+
+    /** v0.4.24：cookie 全局对象（夜寒书库族 `cookie.removeCookie(url)` / `cookie.getCookie(url)`） */
+    class JsCookie {
+        fun getCookie(url: String?): String? = Http.cookiesOf(url)
+        fun removeCookie(url: String?) = Http.clearCookies(url)
+        fun setCookie(url: String?, value: String?) = Http.setCookie(url, value)
     }
 
     /**

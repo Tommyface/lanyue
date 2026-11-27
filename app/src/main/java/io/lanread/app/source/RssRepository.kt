@@ -213,6 +213,18 @@ class RssRepository(
                 }
             }
         }
+        // v0.4.24：singleUrl 型源兜底——源没有 ruleArticles（煎蛋/优设/Acg17 等整站单页形态），
+        // Legado 语义是源首页即一篇内容（WebView 渲染原网页）。列表产单篇「打开源网页」，
+        // 文章页正文为空时 WebView 直接加载原页（RssArticleScreen 现有行为）。
+        if (items.isEmpty() && (src.singleUrl == true || src.ruleArticles.isNullOrBlank())) {
+            val title = src.sourceName.ifBlank { "源网页" }
+            if (url.isNotBlank() && url.startsWith("http")) {
+                lastEmptyReason = "singleUrl 源：直接打开原网页"
+                return listOf(
+                    Article(title, url, "", "<p>（singleUrl 源——点击将打开原网页）</p>")
+                )
+            }
+        }
         return buildArticles(src, items, url, vars, bindings)
     }
 

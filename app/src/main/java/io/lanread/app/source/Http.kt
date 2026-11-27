@@ -63,6 +63,41 @@ object Http {
     const val UA =
         "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
 
+    /** 最近响应头透出（JsExt.ResponseWrap.headers 用，v0.4.24） */
+    @Volatile
+    var lastHeaders: Map<String, List<String>> = emptyMap()
+        internal set
+
+    /** v0.4.24：JS 侧 cookie 管理（cookie.removeCookie/getCookie/setCookie 桥） */
+    fun clearCookies(url: String?) {
+        if (url.isNullOrBlank()) return
+        val host = hostOf(url) ?: return
+        cookieStore.remove(host)
+    }
+
+    fun setCookie(url: String?, value: String?) {
+        if (url.isNullOrBlank() || value.isNullOrBlank()) return
+        val host = hostOf(url) ?: return
+        val cookie = Cookie.Builder().domain(host).name("manual").value(value).build()
+        val bucket = cookieStore.getOrPut(host) { mutableListOf() }
+        synchronized(bucket) {
+            bucket.removeAll { it.name == "manual" }
+            bucket.add(cookie)
+        }
+    }
+
+    fun cookiesOf(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        val host = hostOf(url) ?: return null
+        val bucket = cookieStore[host] ?: return null
+        synchronized(bucket) {
+            return bucket.joinToString("; ") { "${it.name}=${it.value}" }.ifBlank { null }
+        }
+    }
+
+    private fun hostOf(url: String): String? =
+        Regex("https?://([^/]+)").find(url)?.groupValues?.getOrNull(1)?.lowercase()
+
     fun get(url: String): String = get(url, null, null)
 
     fun get(url: String, baseUrl: String?): String = get(url, baseUrl, null)
@@ -156,6 +191,8 @@ object Http {
             try {
                 client.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) throw RuntimeException("HTTP ${resp.code} @ $url")
+                    // v0.4.24：响应头透出（java.get(url,{}).headers('Location') 族）
+                    lastHeaders = resp.headers.toMultimap()
                     val bytes = resp.body?.bytes() ?: ByteArray(0)
                     val ctype = resp.header("Content-Type") ?: ""
                     val declared = opts.charset

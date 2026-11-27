@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.23
+# 澜阅 LanRead v0.4.24
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -148,6 +148,13 @@
      - **searchUrl 搜索**：订阅源列表页搜索图标 → 输入关键词，按源 searchUrl 模板请求（注入 key/searchKey/sourceKey/page/baseUrl 变量，source 绑临时 variable 桥不污染全局存），933 型 `{{String(source.variable)}}` 与 yck 型 `{{key}}` 模板均兼容
      - **搜索翻页**：搜索结果沿用底部翻页递增 page；未配置 searchUrl 的源明确提示
      - 仓库重构：抽出 fetchAndBuild 公共链路（请求 + ruleArticles 解析 + 镜像降级重试 + working_host 回写），分组浏览与搜索共用
+     30. **合集实测 API 补齐（v0.4.24）**：
+      - **source.getKey()/source.key**：书源 URL 井号后备用地址（无忧书城/网书/夜寒族真实搜索域），searchOne 注入 bookSourceKey 变量
+      - **java.get(url, options)**：返回 Response 包装（headers('Location') 重定向读取——无忧书城族）
+      - **cookie 全局对象**：removeCookie/getCookie/setCookie（夜寒书库族）
+      - **SymmetricCrypto.encrypt**：AES 加密（点众阅读族请求体 hex 加密）
+      - **tripleDESEncodeBase64**（3DES）、**androidId**、**hexDecodeToByteArray** 补齐
+      - **singleUrl 订阅源兜底**：无 ruleArticles 的整站源（煎蛋/优设/Acg17 等）产「打开原网页」单篇
      30. **20 源实测引擎补全 + 视觉重绘（v0.4.23）**：
       - **@js: 中缀管道**：字段规则 $.bookId@js:kbDetailUrl(result) 前段提取值作 result 传后段 JS；返回值里的 {{kbSignTail()}} 占位继续模板替换（爱奇艺漫画）
       - **整段 JS 内嵌模板**：@js:qmDetail('{{$.id}}') 的 {{$.id}} 先对当前 item 求值再执行（七猫 API）
