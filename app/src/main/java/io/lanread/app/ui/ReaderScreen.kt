@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -530,11 +532,20 @@ private fun ComicView(
     val listState = rememberLazyListState()
     if (images.isEmpty()) {
         Box(modifier, contentAlignment = Alignment.Center) {
-            Text(
-                "没有解析到图片（源规则未返回图片列表）",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    painterResource(io.lanread.app.R.drawable.ic_comic_placeholder),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(48.dp)
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "没有解析到图片（源规则未返回图片列表）",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
         return
     }
@@ -547,6 +558,7 @@ private fun ComicView(
             val url = images[i]
             if (url.isVideoLike()) {
                 // 视频条目（如源把 tiktokcdn mp4 混进图片列表）：可点击的占位卡片
+                // v0.4.23：自绘视频占位矢量（播放圆窗+水波进度）替代 emoji
                 Box(
                     Modifier
                         .fillMaxWidth()
@@ -555,8 +567,13 @@ private fun ComicView(
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("🎬", fontSize = 26.sp)
-                        Spacer(Modifier.height(4.dp))
+                        Icon(
+                            painterResource(io.lanread.app.R.drawable.ic_video_placeholder),
+                            contentDescription = "视频章节",
+                            tint = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.size(44.dp)
+                        )
+                        Spacer(Modifier.height(6.dp))
                         Text(
                             "视频内容（第 ${i + 1} 项），点击播放",
                             fontSize = 12.sp,

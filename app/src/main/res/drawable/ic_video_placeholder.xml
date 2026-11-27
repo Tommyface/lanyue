@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 视频章节占位（v0.4.23 自绘）：播放圆窗 + 水波进度 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#B97F4E"
+        android:fillAlpha="0.16"
+        android:pathData="M8,12 h32 a4,4 0 0 1 4,4 v18 h-36 v-18 a4,4 0 0 1 4,-4 z" />
+    <path
+        android:fillColor="#B97F4E"
+        android:pathData="M21,18 L30,23 L21,28 Z" />
+    <path
+        android:strokeColor="#6FA8BC"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M10,40 q7,-6 14,0 t14,0" />
+</vector>

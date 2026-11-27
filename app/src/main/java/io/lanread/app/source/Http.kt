@@ -178,13 +178,19 @@ object Http {
             val el = Json.parseToJsonElement(raw.trim())
             if (el is JsonObject) {
                 val m = LinkedHashMap<String, String>()
-                for ((k, v) in el) (v as? JsonPrimitive)?.let { p -> m[k] = p.content }
+                for ((k, v) in el) (v as? JsonPrimitive)?.let { p -> m[sanitizeHeaderName(k)] = p.content }
                 if (m.isNotEmpty()) m else null
             } else null
         } catch (e: Exception) {
             null
         }
     }
+
+    /** v0.4.23：header 名清洗——源 JSON 里偶见 U+2011 非断连字符（篱笆 "User‑Agent"），
+     * OkHttp 直接抛 Unexpected char；统一还原为 ASCII 连字符。 */
+    private fun sanitizeHeaderName(name: String): String =
+        name.replace('‑', '-').replace('−', '-').replace('‐', '-').replace('–', '-')
+            .replace('—', '-').trim()
 
     /**
      * 相对 URL 补全（v0.4.8）：

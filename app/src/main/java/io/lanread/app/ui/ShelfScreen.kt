@@ -37,6 +37,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.layout.size
+import io.lanread.app.R
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -175,6 +178,14 @@ fun ShelfScreen(nav: NavController) {
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // v0.4.23：空态插画（开卷小书浮于澜水）
+                Icon(
+                    painterResource(R.drawable.ic_shelf_empty),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(96.dp)
+                )
+                Spacer(Modifier.height(16.dp))
                 Text(
                     "书架还空着",
                     fontFamily = LanType.Display,
@@ -231,8 +242,9 @@ fun ShelfScreen(nav: NavController) {
 }
 
 /**
- * 书架条目（v0.4.13，按参考图重设计）：单列列表——左侧 3:4 圆角封面（无封面回退书名首字底纹），
+ * 书架条目（v0.4.13，按参考图重设计；v0.4.23 视觉重绘）：单列列表——左侧 3:4 圆角封面（无封面回退书名首字底纹），
  * 右侧书名/作者/进度/最新章节/两行简介。长按移出书架。
+ * 签名元素：条目左缘 4dp 书脊色带（按书 id 囷定四色系之一——每本书有自己的书脊）。
  */
 @Composable
 private fun BookRowCard(book: BookEntity, onClick: () -> Unit, onLongClick: () -> Unit) {
@@ -244,9 +256,17 @@ private fun BookRowCard(book: BookEntity, onClick: () -> Unit, onLongClick: () -
             .pointerInput(Unit) {
                 detectTapGestures(onTap = { onClick() }, onLongPress = { onLongClick() })
             }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(start = 0.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // 书脊色带：左缘 4dp 竖色带（v0.4.23 签名元素）
+        Box(
+            Modifier
+                .width(4.dp)
+                .height(88.dp)
+                .background(SpinePalette.of(book.id))
+        )
+        Spacer(Modifier.width(10.dp))
         Box(
             Modifier
                 .width(66.dp)

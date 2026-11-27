@@ -5,7 +5,7 @@
 
     <application
         android:name=".LanApp"
-        android:label="澜阅"
+        android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.LanRead">

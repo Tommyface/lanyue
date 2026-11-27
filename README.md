@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.22
+# 澜阅 LanRead v0.4.23
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -148,6 +148,17 @@
      - **searchUrl 搜索**：订阅源列表页搜索图标 → 输入关键词，按源 searchUrl 模板请求（注入 key/searchKey/sourceKey/page/baseUrl 变量，source 绑临时 variable 桥不污染全局存），933 型 `{{String(source.variable)}}` 与 yck 型 `{{key}}` 模板均兼容
      - **搜索翻页**：搜索结果沿用底部翻页递增 page；未配置 searchUrl 的源明确提示
      - 仓库重构：抽出 fetchAndBuild 公共链路（请求 + ruleArticles 解析 + 镜像降级重试 + working_host 回写），分组浏览与搜索共用
+     30. **20 源实测引擎补全 + 视觉重绘（v0.4.23）**：
+      - **@js: 中缀管道**：字段规则 $.bookId@js:kbDetailUrl(result) 前段提取值作 result 传后段 JS；返回值里的 {{kbSignTail()}} 占位继续模板替换（爱奇艺漫画）
+      - **整段 JS 内嵌模板**：@js:qmDetail('{{$.id}}') 的 {{$.id}} 先对当前 item 求值再执行（七猫 API）
+      - **原生 CSS 判定**：规则含空格/冒号/属性选择器（#hotcontent .item、dt a@text、meta[property="og:image"]@content）整串交 jsoup——旧版 token 切分拆烂选择器
+      - **无前缀 JSONPath**：body 为 JSON 时 data.books 直接按 JSONPath 求值（七猫）
+      - **纯属性/裸文本规则**：@title/@href/	ext/html——列表项自身属性与内容（搬山人、茂林 5445 章实测）
+      - **tag+class 拼接**：dl.kb-b → dl.kb-b（旧版拼成 dlkb-b）
+      - **result 注入原始对象**：列表项字段 JS 里 esult.select('p.title') 直接拿 Element（手机小说型源）
+      - **<js> 两段式 rest 兼默认语法**：<js>or7Search(result,..)</js>dl.kb-b（偶然中文）
+      - **header 对象兼容 + U+2011 连字符清洗**：header 写成 JSON 对象的源（篱笆）与特殊连字符 header 名
+      - **视觉重绘**：澜靛/赭签新色板（冷色水墨+暖书签强调）、书脊色带签名元素、开卷书+三层澜水启动图标、自绘漫画/视频/空态矢量插画、状态栏沉浸（enableEdgeToEdge）
      30. **引擎修复与 JsExt API 大补（v0.4.22）**：
       - **java.ajax / java.post / java.connect**：Legado 网络桥（支持 `URL,{options}` POST 选项）；燃文（首页取令牌再 POST 搜索）、群小说（_token）等源搜索依赖——修复「只有漫蛙能搜出」的引擎缺陷
       - **java.getString / java.getElements**：对当前规则上下文求值（ThreadLocal 注入）；933 型视频源 ruleContent 第一句即 `java.getString('h1@text')`

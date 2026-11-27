@@ -94,21 +94,40 @@ object BookSourceParser {
 
     /** 解析一段文本（JSON 数组或单对象），单条失败不影响其余 */
     fun parseText(text: String): List<BookSource> {
-        // v0.4.22：剥离 UTF-8 BOM（Windows 下载的源 JSON 常带，startsWith("[") 判定被 BOM 干扰）
+        // v0.4.22：剥离 UTF-8 BOM（Windows 下载的源 JSON 常带）
         val trimmed = text.trim().removePrefix("﻿")
         if (trimmed.isEmpty()) return emptyList()
         return try {
             if (trimmed.startsWith("[")) {
                 val arr: JsonArray = json.parseToJsonElement(trimmed).jsonArray
                 arr.mapNotNull { el ->
-                    runCatching { json.decodeFromJsonElement(BookSource.serializer(), el) }.getOrNull()
+                    runCatching {
+                        json.decodeFromJsonElement(BookSource.serializer(), normalizeHeader(el))
+                    }.getOrNull()
                 }
             } else {
-                listOf(json.decodeFromString(BookSource.serializer(), trimmed))
+                val el = json.parseToJsonElement(trimmed)
+                listOf(json.decodeFromJsonElement(BookSource.serializer(), normalizeHeader(el)))
             }
         } catch (e: Exception) {
             emptyList()
         }
+    }
+
+    /**
+     * v0.4.23：header 字段兼容对象形态（篱笆好文学等源把 header 写成 JSON 对象
+     * 而非字符串）——序列化为字符串再入模型，Http.parseHeaders 照常消费。
+     */
+    private fun normalizeHeader(el: kotlinx.serialization.json.JsonElement): kotlinx.serialization.json.JsonElement {
+        val obj = el as? kotlinx.serialization.json.JsonObject ?: return el
+        val headerEl = obj["header"] ?: return el
+        if (headerEl is kotlinx.serialization.json.JsonObject) {
+            val str = headerEl.toString()
+            val mutable = obj.toMutableMap()
+            mutable["header"] = kotlinx.serialization.json.JsonPrimitive(str)
+            return kotlinx.serialization.json.JsonObject(mutable)
+        }
+        return el
     }
 
     fun parseSingle(storedJson: String): BookSource? = try {

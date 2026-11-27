@@ -407,7 +407,10 @@ object Analyzer {
                     }
                 }
                 r.startsWith("<js>") -> {
-                    // 两段式：<js>脚本</js> 后半段（如 $.list）
+                    // 两段式：<js>脚本</js> 后半段（如 $.list / dl.kb-b）
+                    // v0.4.23：rest 兼容两种形态——JSONPath（$.list）与 Legado 默认语法
+                    //（dl.kb-b）——偶然中文 or7Search 返回 HTML 后接 dl.kb-b 选择即此形态，
+                    // 旧版一律当 JSONPath 传 readJson → HTML 串必然 null → 列表空。
                     val end = r.indexOf("</js>")
                     if (end < 0) return emptyList()
                     val js = r.substring(4, end)
@@ -418,9 +421,12 @@ object Analyzer {
                         // 脚本本身返回列表 JSON（如 [{"title":..}]）
                         val v = readJson(Ctx(jsResult), "$")?.value
                         if (v is List<*>) v.map { Ctx(it) } else emptyList()
-                    } else {
+                    } else if (rest.startsWith("$")) {
                         val v = readJson(Ctx(jsResult), rest)?.value
                         if (v is List<*>) v.map { Ctx(it) } else emptyList()
+                    } else {
+                        // Legado 默认语法（dl.kb-b / a.xxx）：jsResult 作新 body 递归求值
+                        getItems(jsResult, baseUri, rest, vars, jsLib, bindings)
                     }
                 }
                 r.startsWith("@css:") -> {
@@ -435,18 +441,34 @@ object Analyzer {
                 }
                 r.startsWith("//") -> emptyList() // XPath 暂不支持
                 else -> {
-                    // 中缀 @=子选择（Legado 语义 ".layui-card-body@.ylist"= 卡片下的 .ylist 条目）：
-                    // 第二段以 . 开头或为常见标签 → 层级 CSS；末尾 @href 等 attr 词仍走属性提取。
-                    // 旧版丢掉 @ 后段，列表项错位为整卡 → 条目内规则（a@href 等）提取落空。
-                    val at = r.indexOf('@')
-                    val descendant = at > 0 && r.substring(at + 1).let { seg ->
-                        (seg.startsWith(".") || seg.startsWith("#") || HTML_TAGS.contains(seg.substringBefore('.').trim()))
+                    // v0.4.23：①含空格 / # 开头的规则是原生 CSS（群小说 #hotcontent .item），
+                    // 整串交 jsoup——旧版 splitSelector 会把 # 开头 token 当 class 拼成 .#xxx 废选择器；
+                    // ②body 是 JSON（七猫 API）时无前缀规则（data.books）按 JSONPath 处理。
+                    val trimmedBody = body.trimStart()
+                    val bodyIsJson = trimmedBody.startsWith("{") || trimmedBody.startsWith("[")
+                    val looksNativeCss = r.contains(' ') || r.startsWith("#") || r.contains(">") || r.contains("~")
+                    when {
+                        bodyIsJson && !looksNativeCss -> {
+                            val path = if (r.startsWith("$")) r else "$." + r
+                            val v = readJson(Ctx(body), path)?.value
+                            if (v is List<*>) v.map { Ctx(it) } else emptyList()
+                        }
+                        looksNativeCss -> selectItems(body, baseUri, r.substringBefore("@").trim())
+                        else -> {
+                            // 中缀 @=子选择（Legado 语义 ".layui-card-body@.ylist"= 卡片下的 .ylist 条目）：
+                            // 第二段以 . 开头或为常见标签 → 层级 CSS；末尾 @href 等 attr 词仍走属性提取。
+                            // 旧版丢掉 @ 后段，列表项错位为整卡 → 条目内规则（a@href 等）提取落空。
+                            val at = r.indexOf('@')
+                            val descendant = at > 0 && r.substring(at + 1).let { seg ->
+                                (seg.startsWith(".") || seg.startsWith("#") || HTML_TAGS.contains(seg.substringBefore('.').trim()))
+                            }
+                            val sel = if (descendant) {
+                                r.split('@').filter { it.isNotBlank() }
+                                    .joinToString(" ") { splitSelector(it).component1() }
+                            } else r.substringBefore("@").trim()
+                            selectItems(body, baseUri, splitSelector(sel).component1())
+                        }
                     }
-                    val sel = if (descendant) {
-                        r.split('@').filter { it.isNotBlank() }
-                            .joinToString(" ") { splitSelector(it).component1() }
-                    } else r.substringBefore("@").trim()
-                    selectItems(body, baseUri, splitSelector(sel).component1())
                 }
             }
         } catch (e: Exception) {
@@ -478,7 +500,13 @@ object Analyzer {
         // 漫蛙 <js>…</js> 与 OmoFun @js:(function(){…})() 的 init 均为此形态。
         if (r.startsWith("<js>") || r.startsWith("@js:")) {
             return try {
-                evalMain(r, ctx, vars, jsLib, bindings)
+                // v0.4.23：整段 JS 内嵌的 {{$.id}} 等 {{规则}} 占位先替换再执行
+                //（七猫 bookUrl=`@js:qmDetail('{{$.id}}')`——JS 字符串里的模板）。
+                // 仅处理 {{}} 出现在 JS 字符串内的场景：逐段求值拼回。
+                val prepared = if (r.contains("{{") && r.contains("}}")) {
+                    fillPlaceholders(r, ctx, vars, jsLib, bindings)
+                } else r
+                evalMain(prepared, ctx, vars, jsLib, bindings)
             } catch (e: Exception) {
                 null
             }
@@ -486,6 +514,25 @@ object Analyzer {
         if (r.contains("{{") && r.contains("}}")) {
             val tpl = evalTemplate(r, ctx, vars, jsLib, bindings)
             if (tpl.isNotBlank()) return tpl
+        }
+        // v0.4.23：@js: 中缀两段式（爱奇艺漫画 bookUrl=`$.bookId@js:kbDetailUrl(result)`）：
+        // 前段提取值作为 result 传入后段 JS——Legado 的字段级 JS 管道。
+        // 后段返回值里保留的 {{kbSignTail(...)}} 占位继续模板替换（kbDetailUrl 拼签名 URL 场景）。
+        if (!r.startsWith("@js:")) {
+            val ji = r.indexOf("@js:")
+            if (ji > 0) {
+                val front = r.substring(0, ji).trim()
+                val jsCode = r.substring(ji + 4)
+                if (front.isNotBlank() && jsCode.isNotBlank()) {
+                    val frontVal = getString(front, ctx, vars, jsLib, bindings) ?: return null
+                    return try {
+                        val jsRet = evalJs(jsCode, Ctx(frontVal), vars, jsLib, bindings) ?: return null
+                        if (jsRet.contains("{{")) secondPass(jsRet, ctx, vars, jsLib, bindings) else jsRet
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            }
         }
         if (r.contains("||")) {
             for (p in r.split("||")) {
@@ -554,6 +601,23 @@ object Analyzer {
                 // @js:/@css:/@json: 已在前面分支处理，此处剩余前导 @ 一律剥离。
                 val rr = if (r.startsWith("@")) r.substring(1) else r
                 val v = ctx.value
+                // v0.4.23：纯属性名规则（`@title` / `@href`）与裸文本规则（`text`/`html`）——
+                // 列表项已是目标元素时 Legado 语义是取自身属性/文本（搬山人 @title、茂林 text）。
+                val selfEl = ctx.asElement()
+                val selfText = rr in SELF_TEXT_RULES
+                val selfAttr = rr in ATTR_NAMES
+                when {
+                    selfText && selfEl != null -> when (rr) {
+                        "html", "allHtml" -> selfEl.html()
+                        "all" -> selfEl.outerHtml()
+                        "ownText" -> selfEl.ownText()
+                        else -> selfEl.text()
+                    }
+                    selfAttr && selfEl != null -> {
+                        val abs = selfEl.absUrl(rr)
+                        if (abs.isNotBlank()) abs else selfEl.attr(rr)
+                    }
+                    else -> {
                 // JSON 字符串上下文（如 ruleBookInfo.init 的 JS 返回值）：
                 // 裸字段名按 $.key 取，否则 name/author/tocUrl 等全部提取失败（v0.4.10 修复）
                 val jsonLike = v is String && v.trimStart().let { it.startsWith("{") || it.startsWith("[") }
@@ -564,6 +628,8 @@ object Analyzer {
                 } else if (v is Map<*, *> || v is List<*> || jsonLike) {
                     readJson(ctx, "$." + rr)?.stringified()
                 } else null
+                    }
+                }
             }
         }
     }
@@ -674,6 +740,47 @@ object Analyzer {
     private fun urlEncode(s: String): String =
         java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
+    /**
+     * v0.4.23：JS 代码内嵌 {{规则}} 占位替换（七猫 `@js:qmDetail('{{$.id}}')`）。
+     * {{$.id}} → getString 对当前 item 上下文求值；{{js 表达式}} → evalJs；
+     * 不命中变量/求值失败的占位原样保留（脚本侧自行兜底）。
+     */
+    private fun fillPlaceholders(
+        code: String,
+        ctx: Ctx,
+        vars: Map<String, Any?>,
+        jsLib: String?,
+        bindings: Map<String, Any?>
+    ): String {
+        if (!code.contains("{{")) return code
+        val sb = StringBuilder()
+        var i = 0
+        while (i < code.length) {
+            val s = code.indexOf("{{", i)
+            if (s < 0) {
+                sb.append(code.substring(i)); break
+            }
+            sb.append(code.substring(i, s))
+            val e = code.indexOf("}}", s + 2)
+            if (e < 0) {
+                sb.append(code.substring(s)); break
+            }
+            val ph = code.substring(s + 2, e)
+            val v: String? = when {
+                ph.startsWith("@") || ph.startsWith("$.") || ph.startsWith(".") || ph.startsWith("[") ->
+                    getString(ph, ctx, vars, jsLib, bindings)
+                else -> try {
+                    evalJs(ph, ctx, vars, jsLib, bindings)
+                } catch (ex: Exception) {
+                    null
+                }
+            }
+            sb.append(v ?: code.substring(s, e + 2))
+            i = e + 2
+        }
+        return sb.toString()
+    }
+
     // ---------------- JSONPath ----------------
 
     private class Raw(val value: Any?) {
@@ -713,9 +820,27 @@ object Analyzer {
 
     private fun isIndexToken(t: String): Boolean = t.matches(Regex("-?\\d+"))
 
-    /** "class.bookbox.0"→(".bookbox",0)；"span.-1"→("span",-1)；"h2"→("h2",null) */
+    /** v0.4.23：常见 HTML 属性名（纯属性规则的自身取值判定） */
+    private val ATTR_NAMES = setOf(
+        "title", "href", "src", "alt", "class", "id", "name", "value",
+        "content", "property", "rel", "type", "style", "width", "height",
+        "data-original", "data-src", "data-url", "data-title", "data-rid",
+        "charset", "lang", "target", "placeholder"
+    )
+
+    /** v0.4.23：裸文本规则（text/ownText/html/all）——列表项自身内容（茂林 chapterName=text） */
+    private val SELF_TEXT_RULES = setOf("text", "textNodes", "ownText", "html", "allHtml", "all")
+
+    /** "class.bookbox.0"→(".bookbox",0)；"span.-1"→("span",-1)；"h2"→("h2",null)
+     *
+     * v0.4.23：①含空格/冒号/属性选择器的规则是原生 CSS（dt a@text / meta[property="…"]@content）
+     * 原样返回交 jsoup——旧版把 "dt a" 当 class 拼成 .dt a 必然空；
+     * ②tag 模式后续 token 非标签名时是 class（dl.kb-b → "dl.kb-b"）——旧版直接拼接成 dlkb-b。 */
     private fun splitSelector(rule: String): Pair<String, Int?> {
         val r = rule.substringBefore("@").trim()
+        if (r.contains(' ') || r.contains(':') || r.contains('[')) {
+            return r to null
+        }
         val tokens = r.split('.').filter { it.isNotBlank() }
         val css = StringBuilder()
         var index: Int? = null
@@ -743,7 +868,10 @@ object Analyzer {
             } else {
                 when (mode) {
                     "id" -> css.append("#").append(t)
-                    "tag" -> css.append(t)            // 后续 token 作标签/类名补充
+                    "tag" -> {
+                        // 后续 token：标签名 → 子元素；否则 class（dl.kb-b → dl.kb-b）
+                        if (t in HTML_TAGS) css.append(" ").append(t) else css.append(".").append(t)
+                    }
                     else -> css.append(".").append(t)
                 }
             }
@@ -846,11 +974,15 @@ object Analyzer {
             val scope: Scriptable = cx.initStandardObjects()
             // 供 jsLib 使用 Packages.org.jsoup 的简写
             cx.evaluateString(scope, "var org = Packages.org;", "<polyfill>", 1, null)
-            val resultObj = when (val v = ctx.value) {
-                is Element -> v.text()
-                is Document -> v.text()
+            // v0.4.23：result 注入原始上下文对象——列表项字段规则（8035 手机小说
+            // `@js:(function(){var e=result; e.select('p.title')...})()`）需要 Element 的
+            // select/attr API；字符串上下文（bookList 的整页 HTML）保持 String 不变，
+            // 漫蛙/OmoFun 的 String(result||'') 再 Jsoup.parse 链路不受影响。
+            val resultObj: Any? = when (val v = ctx.value) {
+                is Element -> v
+                is Document -> v
                 null -> ""
-                else -> v.toString()
+                else -> v
             }
             scope.put("result", scope, resultObj ?: "")
             for ((k, v) in vars) {

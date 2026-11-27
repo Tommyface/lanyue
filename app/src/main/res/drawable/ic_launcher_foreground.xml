@@ -1,18 +1,55 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 澜阅标识：墨书脊 + 澜水波（108dp 画布，安全区约中心 66dp） -->
+<!-- 澜阅标识（v0.4.23 重绘）：开卷书页 + 三层澜水波（108dp 画布，安全区约中心 66dp） -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 书脊：墨青圆角竖条 -->
+    <!-- 左书页：宣纸色开卷梯形 -->
     <path
-        android:fillColor="#1E3A47"
-        android:pathData="M48,28 h12 a5,5 0 0 1 5,5 v42 a5,5 0 0 1 -5,5 h-12 a5,5 0 0 1 -5,-5 v-42 a5,5 0 0 1 5,-5 z" />
-    <!-- 澜水波：横向三折波线穿过书脊 -->
+        android:fillColor="#F5F1E5"
+        android:pathData="M54,32 C48,30 40,29 33,30 L33,68 C40,67 48,68 54,70 Z" />
+    <!-- 右书页：宣纸色开卷梯形 -->
     <path
-        android:strokeColor="#3E7C8F"
-        android:strokeWidth="5"
+        android:fillColor="#EAE4D2"
+        android:pathData="M54,32 C60,30 68,29 75,30 L75,68 C68,67 60,68 54,70 Z" />
+    <!-- 书脊中缝：澜靛细线 -->
+    <path
+        android:strokeColor="#24586F"
+        android:strokeWidth="3.5"
         android:strokeLineCap="round"
-        android:pathData="M28,54 q8,-9 16,0 t16,0 t16,0 t16,0" />
+        android:pathData="M54,31 L54,71" />
+    <!-- 页面文字线：左右书页上的墨色短线 -->
+    <path
+        android:strokeColor="#24586F"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M37,38 L50,37 M37,45 L50,44 M37,52 L50,51" />
+    <path
+        android:strokeColor="#24586F"
+        android:strokeAlpha="0.7"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M58,37 L71,38 M58,44 L71,45 M58,51 L71,52" />
+    <!-- 三层澜水波：由深至浅横过书底 -->
+    <path
+        android:strokeColor="#24586F"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M26,78 q9,-6 18,0 t18,0 t18,0 t18,0" />
+    <path
+        android:strokeColor="#6FA8BC"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M32,86 q9,-6 18,0 t18,0 t18,0 t10,0" />
+    <path
+        android:strokeColor="#6FA8BC"
+        android:strokeAlpha="0.55"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M40,94 q9,-6 18,0 t18,0 t10,0" />
+    <!-- 赭石书签丝带：右上角垂下 -->
+    <path
+        android:fillColor="#B97F4E"
+        android:pathData="M64,27 L70,27 L70,42 L67,39 L64,42 Z" />
 </vector>
