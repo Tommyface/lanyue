@@ -94,7 +94,8 @@ object BookSourceParser {
 
     /** 解析一段文本（JSON 数组或单对象），单条失败不影响其余 */
     fun parseText(text: String): List<BookSource> {
-        val trimmed = text.trim()
+        // v0.4.22：剥离 UTF-8 BOM（Windows 下载的源 JSON 常带，startsWith("[") 判定被 BOM 干扰）
+        val trimmed = text.trim().removePrefix("﻿")
         if (trimmed.isEmpty()) return emptyList()
         return try {
             if (trimmed.startsWith("[")) {

@@ -89,7 +89,14 @@ class SearchViewModel(app: android.app.Application) : AndroidViewModel(app) {
                 val hits = repo.searchAll(keyword)
                 results = hits
                 searching = false
-                if (hits.isEmpty()) message = "没有搜到结果：书源未导入、全部禁用或全部失败"
+                if (hits.isEmpty()) {
+                    // v0.4.22：逐源失败原因透出（旧版一句「全部失败」无法诊断哪个源为什么挂）
+                    val notes = repo.lastSearchNotes
+                    message = if (notes.isNotEmpty()) {
+                        "没有搜到结果：\n" + notes.take(8).joinToString("\n") +
+                            (if (notes.size > 8) "\n…（共 ${notes.size} 条失败明细）" else "")
+                    } else "没有搜到结果：书源未导入、全部禁用或全部失败"
+                }
             } catch (e: Exception) {
                 searching = false
                 message = "搜索失败：${e.message}"

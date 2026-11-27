@@ -54,6 +54,10 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
     @Volatile
     var lastEmptyReason: String? = null
 
+    /** v0.4.22：聚合搜索中逐源失败原因（源名 → 原因；全部源空结果时 UI 透出） */
+    @Volatile
+    var lastSearchNotes: List<String> = emptyList()
+
     private val jsLibBindings: Map<String, Any>
         get() {
             appCtx?.let { LanJs.ensure(it) }
@@ -134,17 +138,20 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val sources = sourceDao.enabled()
         if (sources.isEmpty()) return@withContext emptyList()
         coroutineScope {
-            sources.map { se ->
+            val notes = java.util.Collections.synchronizedList(ArrayList<String>())
+            val hits = sources.map { se ->
                 async {
                     // 单源限时：书源自带 JS 探测线路时避免弱网下长时间卡搜索
-                    runCatching { withTimeoutOrNull(90_000L) { searchOne(se, keyword) } }
+                    runCatching { withTimeoutOrNull(90_000L) { searchOne(se, keyword, notes) } }
                         .getOrElse { emptyList() } ?: emptyList()
                 }
             }.awaitAll().flatten()
+            lastSearchNotes = notes.toList()
+            hits
         }
     }
 
-    private fun searchOne(se: SourceEntity, keyword: String): List<SearchHit> {
+    private fun searchOne(se: SourceEntity, keyword: String, notes: MutableList<String>?): List<SearchHit> {
         val src = BookSourceParser.parseSingle(se.json) ?: return emptyList()
         val rules = src.ruleSearch ?: return emptyList()
         // Legado 标准把 searchUrl 放在顶层（ruleSearch.searchUrl 为旧兼容）
@@ -165,6 +172,11 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val url = Analyzer.evalTemplate(
             searchUrl, Analyzer.Ctx(""), tplVars, src.jsLib, jsLibBindings
         )
+        if (url.isBlank()) {
+            // v0.4.22：URL 模板/JS 失败不再静默（旧版拿 <js>原文当 URL 去 404）
+            notes?.add("${se.name}：搜索 URL 生成失败（${Analyzer.lastJsError?.take(100) ?: "脚本无返回"}）")
+            return emptyList()
+        }
         // Legado 约定：规则阶段的 baseUrl 是实际请求 URL
         // （漫蛙等源的 bookList 脚本从 baseUrl 里提取 k=/page= 参数）
         val vars = tplVars + mapOf("baseUrl" to url)
@@ -172,6 +184,13 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val body = runCatching { Http.get(url, se.url, srcHeaders) }.getOrElse { "" }
         // 列表规则（<js>$.list 两段式 / CSS / JSONPath）
         val items = Analyzer.getItems(body, se.url, rules.bookList, vars, src.jsLib, jsLibBindings)
+        if (items.isEmpty()) {
+            val reason = if (body.isBlank()) "请求失败/空响应"
+            else if (body.contains("系统安全验证") || body.contains("verify_check") || body.length < 4000)
+                "疑似反爬验证页（可重试或换线路）"
+            else "未命中（规则不适用或无此书）"
+            notes?.add("${se.name}：$reason")
+        }
         val hits = ArrayList<SearchHit>()
         for (item in items) {
             val name = Analyzer.getString(rules.name, item, vars, src.jsLib, jsLibBindings)?.trim()
@@ -264,13 +283,27 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         )
         // 同搜索：规则阶段的 baseUrl 为实际分页 URL（漫娃脚本从中提取 /api/… path 与 tag）
         val vars = tplVars + mapOf("baseUrl" to url)
-        val body = try {
-            Http.get(url, se.url, srcHeaders)
+        var body = ""
+        var usedUrl = url
+        try {
+            body = Http.get(url, se.url, srcHeaders)
         } catch (e: Exception) {
-            lastEmptyReason = "入口页请求失败（${e.message?.take(80) ?: e.javaClass.simpleName}），若列表规则含 JS 可自愈"
-            ""
+            // v0.4.22：第1页 404 且模板为 {{page}}.html 形态时，站点真实首页是无后缀路径
+            // （实测燃文 /xuanhuan/1.html=404 而 /xuanhuan/=200——源的模板对第1页拼错，
+            // 属源数据滞后但可自动纠正）；非 404（超时/断连）不降级
+            if (page == 1 && url.contains("/1.html")) {
+                val fallback = url.replace("/1.html", "/")
+                body = runCatching { Http.get(fallback, se.url, srcHeaders) }.getOrElse { "" }
+                if (body.isNotBlank()) {
+                    usedUrl = fallback
+                    lastEmptyReason = "已自动切换首页路径（源模板第 1 页拼错 404）"
+                }
+            }
+            if (body.isBlank()) {
+                lastEmptyReason = "入口页请求失败（${e.message?.take(80) ?: e.javaClass.simpleName}），若列表规则含 JS 可自愈"
+            }
         }
-        val items = Analyzer.getItems(body, se.url, rules.bookList, vars, src.jsLib, jsLibBindings)
+        val items = Analyzer.getItems(body, usedUrl.takeIf { it.isNotBlank() } ?: se.url, rules.bookList, vars, src.jsLib, jsLibBindings)
         val hits = ArrayList<SearchHit>()
         for (item in items) {
             val name = Analyzer.getString(rules.name, item, vars, src.jsLib, jsLibBindings)?.trim()
@@ -390,6 +423,10 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
      * 漫画源（<js> 产出 <img src=...> 串）原样返回，由阅读器分支渲染图片。
      * v0.4.18：支持 ruleContent.nextContentUrl 自动翻页——正文分页时逐页抓取拼接
      * （漫画源每页若干图、文本源每页一段，均常见），最多 10 页防失控。
+     *
+     * v0.4.22：chapterUrl 是视频直链（tiktokcdn mp4/ts/m3u8 等）时不抓页面——
+     * 源的 content 规则对视频 URL 无意义，Http 404 报「本页没有内容」即用户撞到的现象。
+     * 透传标记标记给阅读器走视频占位卡 → 点击播放。
      */
     suspend fun content(sourceId: Long, chapterUrl: String): String = withContext(Dispatchers.IO) {
         appCtx?.let { LanJs.ensure(it) }
@@ -403,6 +440,11 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val parts = ArrayList<String>()
         var visited = HashSet<String>()
         var pageCount = 0
+        // v0.4.22：视频直链章节（漫画源把 mp4/ts/m3u8 混进目录）——产 <video> 标记，
+        // 阅读器解析为占位卡点击播放（旧版 Http 抓视频 URL 当 HTML → 404 →「本页没有内容」）
+        if (chapterUrl.isVideoDirectLink()) {
+            return@withContext "<p><video-src>${Http.absUrl(se.url, chapterUrl)}</video-src></p>"
+        }
         while (pageCount < 10 && !visited.contains(currentUrl)) {
             visited.add(currentUrl)
             pageCount++
@@ -525,5 +567,15 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val ssl = javax.net.ssl.SSLContext.getInstance("SSL")
         ssl.init(null, arrayOf<javax.net.ssl.TrustManager>(tm), java.security.SecureRandom())
         return ssl.socketFactory to tm
+    }
+
+    companion object {
+        /** v0.4.22：视频直链甄别（章节 URL 形态）：mp4/ts/m3u8 扩展名、mime_type=video、视频 CDN 路径 */
+        fun String.isVideoDirectLink(): Boolean {
+            val u = this.substringBefore('?')
+            return this.contains("mime_type=video") ||
+                u.endsWith(".mp4") || u.endsWith(".ts") || u.endsWith(".m3u8") ||
+                u.contains("/video/tos/")
+        }
     }
 }

@@ -68,7 +68,8 @@ object RssSourceParser {
     }
 
     fun parseText(text: String): List<RssSource> {
-        val trimmed = text.trim()
+        // v0.4.22：剥离 UTF-8 BOM（Windows 下载的源 JSON 常带）
+        val trimmed = text.trim().removePrefix("﻿")
         if (trimmed.isEmpty()) return emptyList()
         return try {
             if (trimmed.startsWith("[")) {

@@ -35,6 +35,16 @@ object Analyzer {
     @Volatile
     var lastJsError: String? = null
 
+    /** java.getString/getElements 的当前规则上下文（线程本地：JS 在调用线程同步执行） */
+    internal class RuleEvalContext(
+        val ctx: Ctx,
+        val vars: Map<String, Any?>,
+        val jsLib: String?,
+        val bindings: Map<String, Any?>
+    )
+
+    internal val currentRuleEval = ThreadLocal<RuleEvalContext?>()
+
     /** 求值上下文：jsoup Element / Document，或 JSON 反序列化后的 Map/List/字符串 */
     class Ctx(val value: Any?) {
         fun asElement(): Element? = when (value) {
@@ -48,13 +58,21 @@ object Analyzer {
         .options(Option.SUPPRESS_EXCEPTIONS)
         .build()
 
-    /** jsLib 里的 java.* 扩展：toast 与 put/get 源变量存储（跨调用持久） */
+    /** jsLib 里的 java.* 扩展（Legado JsExtensions 兼容子集，v0.4.22 大幅补齐） */
     class JsExt(
         private val store: MutableMap<String, String?> = ConcurrentHashMap(),
         private val toastFn: (String) -> Unit = {}
     ) {
         fun toast(s: String?) {
             if (s != null) toastFn(s)
+        }
+
+        fun longToast(s: String?) {
+            if (s != null) toastFn(s)
+        }
+
+        fun log(s: String?) {
+            if (s != null) println("[js] $s")
         }
 
         fun put(k: String?, v: String?) {
@@ -70,22 +88,202 @@ object Analyzer {
             if (k != null) store.remove(k)
         }
 
+        /** WebView 的 UA（源按浏览器口径拼请求时用） */
+        fun getWebViewUA(): String = Http.UA
+
         /**
-         * Legado 同名 API（v0.4.19）：java.createSymmetricCrypto("aes/cbc/pkcs7padding", key, iv)
-         * .decrypt(result)——漫蛙源 imageDecode 用它解密图片字节。
-         * key/iv 直接作 UTF-8 字节（Legado 对称加密的默认口径）；PKCS5/7 去填充。
+         * Legado java.ajax：url 支持 `URL,{options}`（POST/body/headers/charset——Http 层解析）。
+         * 燃文（取首页令牌再 POST）/ 群小说（_token）/ 茂林 / 书山聚合等源的 searchUrl 全靠它。
+         * 失败返回 null（调用方脚本自行兜底）。
          */
-        fun createSymmetricCrypto(transformation: String?, key: String?, iv: String?): SymmetricCrypto? {
-            if (transformation.isNullOrBlank() || key.isNullOrBlank()) return null
+        fun ajax(url: String?): String? {
+            if (url.isNullOrBlank()) return null
             return try {
-                SymmetricCrypto(
-                    transformation.lowercase(),
-                    key.toByteArray(Charsets.UTF_8),
-                    (iv ?: key).toByteArray(Charsets.UTF_8)
-                )
+                Http.get(url, null, null)
             } catch (e: Exception) {
                 null
             }
+        }
+
+        /**
+         * java.post(url, body, headers)：OmoFun OM_pass 种 cookie、燃文 API POST 等用。
+         * headers 参数接受 JS 对象（Rhino NativeJavaObject 映射）或 JSON 字符串。
+         * 返回响应体（失败 null）。
+         */
+        fun post(url: String?, body: String?, headers: Any?): String? {
+            if (url.isNullOrBlank()) return null
+            val hs = headersToMap(headers)
+            val opts = Http.ReqOpts(method = "POST", body = body ?: "", headers = hs)
+            return try {
+                Http.get(url, null, null, opts)
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        /** java.connect(urlStr)：Legado 简化连接（GET），返回可 body() 的对象；这里直接返回体字符串包装 */
+        fun connect(url: String?): ResponseWrap? {
+            if (url.isNullOrBlank()) return null
+            return try {
+                ResponseWrap(Http.get(url, null, null))
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        /** OmoFun 的 r.body() 调用形态（connect 返回值链式取体） */
+        class ResponseWrap(private val bodyStr: String) {
+            fun body(): String = bodyStr
+            override fun toString(): String = bodyStr
+        }
+
+        /** JS 传入的 headers（NativeJavaObject/Map/JSON 字符串）→ Map */
+        private fun headersToMap(headers: Any?): Map<String, String> {
+            return when (headers) {
+                null -> emptyMap()
+                is Map<*, *> -> headers.entries.associate { it.key.toString() to (it.value?.toString() ?: "") }
+                else -> {
+                    // JS 对象：通过 Rhino Scriptable 取键（Json 序列化最稳）
+                    val s = headers.toString()
+                    if (s.trimStart().startsWith("{")) {
+                        Http.parseHeaders(s) ?: emptyMap()
+                    } else emptyMap()
+                }
+            }
+        }
+
+        /** 批量 ajax（部分源聚合线路探测用）；输入 JS 数组（Rhino NativeArray 即 List） */
+        fun ajaxAll(urls: Any?): Any? {
+            val list = urls as? List<*> ?: return null
+            val out = ArrayList<String?>(list.size)
+            for (u in list) out.add(ajax(u?.toString()))
+            return out
+        }
+
+        /**
+         * java.getString(rule)：对当前规则上下文求值（933 订阅源 ruleContent 第一句
+         * `java.getString('h1@text')`）。上下文由 evalJsRaw 在执行前写入 ThreadLocal。
+         * String 上下文（原网页 HTML）先 Jsoup 解析再选——getString 的 css 分支只认 Element。
+         */
+        fun getString(rule: String?): String? {
+            val rc = currentRuleEval.get() ?: return null
+            if (rule.isNullOrBlank()) return null
+            return this@Analyzer.run { getString(rule, htmlCtx(rc.ctx), rc.vars, rc.jsLib, rc.bindings) }
+        }
+
+        /** java.getElements(rule)：按列表选择器取元素集合（返回 jsoup Elements，List 兼容） */
+        fun getElements(rule: String?): Any? {
+            val rc = currentRuleEval.get() ?: return null
+            if (rule.isNullOrBlank()) return null
+            val root = htmlCtx(rc.ctx).asElement() ?: return null
+            val (css, _) = splitSelector(rule.trim().removePrefix("@css:"))
+            return root.select(css)
+        }
+
+        private fun htmlCtx(ctx: Ctx): Ctx = when (val v = ctx.value) {
+            is Element, is Document -> ctx
+            is String -> runCatching { Ctx(Jsoup.parse(v, "")) }.getOrDefault(ctx)
+            else -> ctx
+        }
+
+        // ---------------- 编码 / 哈希 ----------------
+
+        fun base64Encode(s: String?): String? =
+            s?.let { android.util.Base64.encodeToString(it.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP) }
+
+        fun base64Decode(s: String?): String? =
+            s?.let { String(base64DecodeToByteArray(it) ?: return null, Charsets.UTF_8) }
+
+        fun base64DecodeToByteArray(s: String?): ByteArray? =
+            s?.let { runCatching { android.util.Base64.decode(it, android.util.Base64.DEFAULT) }.getOrNull() }
+
+        fun base64EncodeToByteArray(b: ByteArray?): String? =
+            b?.let { android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP) }
+
+        fun strToBytes(s: String?): ByteArray? = s?.toByteArray(Charsets.UTF_8)
+
+        fun hexDecodeToByteArray(hex: String?): ByteArray? {
+            if (hex == null) return null
+            val h = hex.trim()
+            if (h.length % 2 != 0) return null
+            return runCatching {
+                val out = ByteArray(h.length / 2)
+                for (i in out.indices) out[i] = h.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+                out
+            }.getOrNull()
+        }
+
+        fun hexDecodeToString(hex: String?): String? =
+            hexDecodeToByteArray(hex)?.toString(Charsets.UTF_8)
+
+        fun md5Encode(s: String?): String? {
+            if (s == null) return null
+            return runCatching {
+                val d = java.security.MessageDigest.getInstance("MD5").digest(s.toByteArray(Charsets.UTF_8))
+                d.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            }.getOrNull()
+        }
+
+        // ---------------- URI 编码（OmoFun 等源拼搜索路径用） ----------------
+
+        /** JS encodeURI 语义：保留 /?&=@+$#等 URI 保留字符 */
+        fun encodeURI(s: String?): String? = encodeWith(s, KEEP_URI)
+
+        /** JS encodeURIComponent 语义 */
+        fun encodeURIComponent(s: String?): String? = encodeWith(s, KEEP_NONE)
+
+        fun decodeURI(s: String?): String? = decodeWith(s)
+
+        fun decodeURIComponent(s: String?): String? = decodeWith(s)
+
+        private val KEEP_URI = setOf(';', '/', '?', ':', '@', '&', '=', '+', '$', ',', '#', '-', '_', '.', '!', '~', '*', '\'', '(', ')')
+        private val KEEP_NONE = setOf('-', '_', '.', '!', '~', '*', '\'', '(', ')')
+
+        private fun encodeWith(s: String?, keep: Set<Char>): String? {
+            if (s == null) return null
+            val enc = java.net.URLEncoder.encode(s, "UTF-8")
+            val sb = StringBuilder(enc.length)
+            for (c in enc) {
+                when {
+                    c == '+' -> sb.append("%20")
+                    c == '%' -> sb.append(c)
+                    keep.contains(c) -> sb.append(c)
+                    else -> sb.append(c)
+                }
+            }
+            // URLEncoder 会转义的保留字符还原回 keep 集合成员
+            var out = sb.toString()
+            for (k in keep) {
+                val hex = "%" + "%02X".format(k.code)
+                out = out.replace(hex, k.toString())
+            }
+            return out
+        }
+
+        private fun decodeWith(s: String?): String? {
+            if (s == null) return null
+            return runCatching { java.net.URLDecoder.decode(s.replace("+", "%20"), "UTF-8") }.getOrNull()
+        }
+
+        /**
+         * Legado 同名 API（v0.4.19 起，v0.4.22 扩参数）：key/iv 可为 String（UTF-8 字节）
+         * 或 byte[]（OmoFun 先 java.strToBytes/java.hexDecodeToByteArray 再传入）。
+         */
+        fun createSymmetricCrypto(transformation: String?, key: Any?, iv: Any?): SymmetricCrypto? {
+            if (transformation.isNullOrBlank() || key == null) return null
+            val keyBytes = bytesOf(key) ?: return null
+            val ivBytes = iv?.let { bytesOf(it) } ?: keyBytes
+            return try {
+                SymmetricCrypto(transformation.lowercase(), keyBytes, ivBytes)
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        private fun bytesOf(v: Any?): ByteArray? = when (v) {
+            is String -> v.toByteArray(Charsets.UTF_8)
+            is ByteArray -> v
+            else -> null
         }
 
         class SymmetricCrypto(
@@ -94,19 +292,23 @@ object Analyzer {
             private val iv: ByteArray
         ) {
             /** 解密（图片字节等）：fail 返回 null（调用方 fallback 原始数据） */
-            fun decrypt(data: String?): ByteArray? = decryptBytes(
-                when {
-                    data == null -> null
-                    // base64 输入（Legado imageDecode 常用口径）
-                    else -> runCatching { android.util.Base64.decode(data, android.util.Base64.DEFAULT) }
-                        .getOrElse { data.toByteArray(Charsets.UTF_8) }
+            fun decrypt(data: Any?): ByteArray? = decryptBytes(
+                when (data) {
+                    null -> null
+                    is ByteArray -> data
+                    else -> runCatching { android.util.Base64.decode(data.toString(), android.util.Base64.DEFAULT) }
+                        .getOrElse { data.toString().toByteArray(Charsets.UTF_8) }
                 }
             )
+
+            /** 解密为字符串（OmoFun 视频播放地址：c.decryptStr(cipher)） */
+            fun decryptStr(data: Any?): String? = decrypt(data)?.toString(Charsets.UTF_8)
 
             fun decryptBytes(data: ByteArray?): ByteArray? {
                 if (data == null || data.isEmpty()) return null
                 return try {
-                    val t = transformation
+                    // javax.crypto 不认 pkcs7padding 名称（AES 下与 PKCS5 等价）；Android 亦兼容
+                    val t = transformation.replace("pkcs7padding", "pkcs5padding")
                     val cipher = javax.crypto.Cipher.getInstance(t)
                     val sks = javax.crypto.spec.SecretKeySpec(key, t.substringBefore('/').uppercase())
                     when (t.substringAfter('/').substringBefore('/')) {
@@ -338,10 +540,12 @@ object Analyzer {
             }
             r.startsWith("//") -> null
             r.startsWith("@css:") -> {
+                // v0.4.22：@css: 后是完整 CSS 选择器（nth-of-type/>/伪类等高级语法），
+                // 不能走 splitSelector 的 Legado token 切分（点号会把伪类/组合器拆烂）。
+                // 尾部 @attr 剥离（attrOf 语义），其余整串直接交 jsoup。
                 val body = r.removePrefix("@css:")
                 val root = ctx.asElement() ?: return null
-                val (css, index) = splitSelector(body)
-                selectByCss(root, css, index, attrOf(body))
+                selectByCss(root, body.substringBefore("@").trim(), null, attrOf(body))
             }
             else -> {
                 // 前导 @ 容错（v0.4.14）：Legado 规则 `@a@href` / `@span.-2@text`（yck 订阅源
@@ -397,12 +601,14 @@ object Analyzer {
         if (t.startsWith("<js>")) {
             val end = t.indexOf("</js>")
             val code = if (end > 0) t.substring(4, end) else t.removePrefix("<js>")
-            val ret = evalJs(code.trim(), ctx, vars, jsLib, bindings) ?: return template
-            return ret
+            // v0.4.22：JS 失败不再回退原始模板（旧版会把 <js>... 当 URL 去 404，报错被掩盖）——
+            // 返回空串，调用方用 lastJsError 拼可读原因
+            val ret = evalJs(code.trim(), ctx, vars, jsLib, bindings) ?: return ""
+            return secondPass(ret, ctx, vars, jsLib, bindings)
         }
         if (t.startsWith("@js:")) {
-            val ret = evalJs(t.removePrefix("@js:"), ctx, vars, jsLib, bindings) ?: return template
-            return ret
+            val ret = evalJs(t.removePrefix("@js:"), ctx, vars, jsLib, bindings) ?: return ""
+            return secondPass(ret, ctx, vars, jsLib, bindings)
         }
         if (!template.contains("{{")) return template
         val sb = StringBuilder()
@@ -442,6 +648,25 @@ object Analyzer {
             if (second == out) out else second
         } catch (e: Exception) {
             out
+        }
+    }
+
+    /** v0.4.22：整段 JS 返回值里的 {{page}} 等占位符继续由模板系统替换
+     *（8100 型 OmoFun searchUrl：JS 返回 '...----------{{page}}---.html'）。
+     * 与旧版 v0.4.15 的二次替换语义对齐，但作用于整段 JS 分支。 */
+    private fun secondPass(
+        ret: String,
+        ctx: Ctx,
+        vars: Map<String, Any?>,
+        jsLib: String?,
+        bindings: Map<String, Any?>
+    ): String {
+        if (!ret.contains("{{")) return ret
+        return try {
+            val second = evalTemplate(ret, ctx, vars, jsLib, bindings)
+            if (second == ret) ret else second
+        } catch (e: Exception) {
+            ret
         }
     }
 
@@ -608,6 +833,9 @@ object Analyzer {
             return null
         }
         lastJsError = null
+        // v0.4.22：暴露当前规则上下文给 java.getString/getElements（933 ruleContent 等）；
+        // 嵌套调用（JS 内调 getString 又触发新 JS）时保存/恢复前值，不破坏外层
+        val prevRuleEval = currentRuleEval.get()
         try {
             // Android 上禁 JIT 字节码生成，纯解释模式（兼容性最好）
             cx.optimizationLevel = -1
@@ -639,6 +867,8 @@ object Analyzer {
                 }
                 append(code)
             }
+            // v0.4.22：暴露当前规则上下文给 java.getString/getElements（933 ruleContent 等）
+            currentRuleEval.set(RuleEvalContext(ctx, vars, jsLib, bindings))
             val ret = cx.evaluateString(scope, full, "<lanread>", 1, null)
             // NativeArray 等 Scriptable 包装为 Java 可用的 List（unwrap）
             return when (ret) {
@@ -657,6 +887,7 @@ object Analyzer {
             lastJsError = "${t.javaClass.simpleName}: ${t.message?.take(120)}"
             return null
         } finally {
+            currentRuleEval.set(prevRuleEval)
             try { Context.exit() } catch (ignore: Exception) { }
         }
     }

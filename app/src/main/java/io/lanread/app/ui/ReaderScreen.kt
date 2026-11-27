@@ -588,5 +588,9 @@ private fun parseImgUrls(html: String): List<String> {
     for (m in Regex("""<img[^>]+src=["']([^"']+)["']""").findAll(html)) {
         out.add(m.groupValues[1])
     }
+    // v0.4.22：视频直链章节标记（content() 产 <video-src>URL</video-src>）→ 占位卡播放
+    for (m in Regex("""<video-src>([^<]+)</video-src>""").findAll(html)) {
+        out.add(m.groupValues[1])
+    }
     return out
 }

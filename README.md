@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.21
+# 澜阅 LanRead v0.4.22
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -148,14 +148,26 @@
      - **searchUrl 搜索**：订阅源列表页搜索图标 → 输入关键词，按源 searchUrl 模板请求（注入 key/searchKey/sourceKey/page/baseUrl 变量，source 绑临时 variable 桥不污染全局存），933 型 `{{String(source.variable)}}` 与 yck 型 `{{key}}` 模板均兼容
      - **搜索翻页**：搜索结果沿用底部翻页递增 page；未配置 searchUrl 的源明确提示
      - 仓库重构：抽出 fetchAndBuild 公共链路（请求 + ruleArticles 解析 + 镜像降级重试 + working_host 回写），分组浏览与搜索共用
-    30. **兼容的 Legado 书源规则子集**：
-    - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引）
-    - `$.` / `@json:` / `[` 开头的 JSONPath
-    - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值），整段 `<js>` 前缀（v0.4.14 起）
-    - `class./tag./id.` 默认语法 + 数字索引 + `@attr`
-    - `##regex[##replace]` 净化规则、`&&` 并列、`||` 兜底
-    - `URL,{JSON}` 选项：POST body / 自定义 headers / charset（v0.4.17 起）
-     - 暂不支持：XPath（`//`）、对象型规则、任意字段两段式
+     30. **引擎修复与 JsExt API 大补（v0.4.22）**：
+      - **java.ajax / java.post / java.connect**：Legado 网络桥（支持 `URL,{options}` POST 选项）；燃文（首页取令牌再 POST 搜索）、群小说（_token）等源搜索依赖——修复「只有漫蛙能搜出」的引擎缺陷
+      - **java.getString / java.getElements**：对当前规则上下文求值（ThreadLocal 注入）；933 型视频源 ruleContent 第一句即 `java.getString('h1@text')`
+      - **全局 Cookie 会话**：燃文等源「首页 → POST 搜索」要求 cookie 跟随，无 cookie 判为机器人（搜索太频繁）
+      - **java.encodeURI / encodeURIComponent / base64Encode/Decode / md5Encode / hexDecode / strToBytes**：OmoFun 等源拼搜索路径与解密用
+      - **@css: 高级选择器**：完整 CSS 直交 jsoup（nth-of-type/>/伪类）——旧版 token 切分拆烂选择器致格格党字段提取全空
+      - **整段 JS 失败不再回退原文**：旧版把 `<js>...` 当 URL 去 404 掩盖真实错误；搜索空结果时逐源透出失败原因
+      - **视频直链章节**：漫画源目录里混进 tiktokcdn mp4/ts 直链时产播放占位卡（旧版抓直链当 HTML → 404）
+      - **发现页第 1 页 404 自动纠正**：`/x/1.html` → `/x/`（源模板对首页拼错时自动降级重试）
+      - **JS 返回值二次模板替换**：整段 JS searchUrl 返回值里保留的 `{{page}}` 继续由模板系统替换（8100 型 OmoFun）
+      - **BOM 剥离**：Windows 下载的源 JSON 带 UTF-8 BOM 此前解析直接失败
+     31. **兼容的 Legado 书源规则子集**：
+     - `@css:` 前缀选择器（含 `@attr` 后缀、`.index` 索引、nth-of-type/> 高级语法）
+     - `$.` / `@json:` / `[` 开头的 JSONPath
+     - `@js:` 脚本与 `{{...}}` 模板（Rhino 求值），整段 `<js>` 前缀（v0.4.14 起）
+     - `class./tag./id.` 默认语法 + 数字索引 + `@attr`
+     - `##regex[##replace]` 净化规则、`&&` 并列、`||` 兜底
+     - `URL,{JSON}` 选项：POST body / 自定义 headers / charset（v0.4.17 起）
+     - java.* JS 桥：ajax/post/connect/getString/getElements/encodeURI/base64/md5/hex/strToBytes/createSymmetricCrypto（含 decryptStr）
+      - 暂不支持：XPath（`//`）、对象型规则、任意字段两段式
 
 > 关于上一条：`<js>...</js>` 两段式列表规则（v0.4.0 起在 bookList/chapterList/content 已支持）
 

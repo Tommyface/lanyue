@@ -3,13 +3,17 @@ package io.lanread.app.source
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import okhttp3.Cookie
+import okhttp3.CookieJar
 import okhttp3.FormBody
+import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Request
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
@@ -18,14 +22,42 @@ import java.util.concurrent.TimeUnit
  *
  * 强制 HTTP/1.1（v0.4.9）：部分 CDN/防护会对 HTTP/2 或非浏览器 TLS 指纹直接
  * RST 连接（真机 Connection reset），HTTP/1.1 + 重试可绕过其中大部分。
+ *
+ * v0.4.22：全局 Cookie 会话（内存）——燃文等源「首页取令牌 → POST 搜索」要求
+ * 首页下发的 cookie 跟随后续请求，无 cookie 会被判为机器人（搜索太频繁/验证页）。
  */
 object Http {
+
+    /** 域名 → cookie 列表（内存全局会话；进程存活期有效） */
+    private val cookieStore = ConcurrentHashMap<String, MutableList<Cookie>>()
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .protocols(listOf(Protocol.HTTP_1_1))
         .retryOnConnectionFailure(true)
+        .cookieJar(object : CookieJar {
+            override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+                val hostKey = url.host.lowercase()
+                val bucket = cookieStore.getOrPut(hostKey) { mutableListOf() }
+                synchronized(bucket) {
+                    for (c in cookies) {
+                        bucket.removeAll { it.name == c.name }
+                        bucket.add(c)
+                    }
+                }
+            }
+
+            override fun loadForRequest(url: HttpUrl): List<Cookie> {
+                val hostKey = url.host.lowercase()
+                val bucket = cookieStore[hostKey] ?: return emptyList()
+                synchronized(bucket) {
+                    val now = System.currentTimeMillis()
+                    bucket.removeAll { it.expiresAt < now }
+                    return bucket.toList()
+                }
+            }
+        })
         .build()
 
     const val UA =
@@ -97,6 +129,11 @@ object Http {
     fun get(url: String, baseUrl: String?, headers: Map<String, String>?): String {
         val (target, opts) = parseReqOpts(url)
         return fetch(target, baseUrl, headers, opts)
+    }
+
+    /** v0.4.22：显式选项请求（java.post 直调：POST/body/headers 已解析好） */
+    fun get(url: String, baseUrl: String?, headers: Map<String, String>?, opts: ReqOpts): String {
+        return fetch(url, baseUrl, headers, opts)
     }
 
     /** POST/GET 通用执行（v0.4.17）：支持源 URL 携带 Legado JSON 选项 */
