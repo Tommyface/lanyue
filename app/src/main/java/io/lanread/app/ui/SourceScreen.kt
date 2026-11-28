@@ -70,7 +70,12 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class SourceViewModel(app: android.app.Application) : AndroidViewModel(app) {
-    private val repo = SourceRepository(AppDatabase.get(app), app)
+    private val repo = SourceRepository(
+        AppDatabase.get(app), app,
+        io.lanread.app.source.RssRepository(
+            AppDatabase.get(app), app, io.lanread.app.source.SourceRepository(AppDatabase.get(app), app)
+        )
+    )
 
     init {
         io.lanread.app.source.LanJs.ensure(app)

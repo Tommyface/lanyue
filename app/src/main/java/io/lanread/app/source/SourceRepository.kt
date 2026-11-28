@@ -35,6 +35,8 @@ object LanJs {
 
     fun ensure(ctx: Context) {
         if (appCtx == null) appCtx = ctx.applicationContext
+        // v0.4.25：WebView 桥上下文注入（java.webView 同步执行桥用）
+        Analyzer.WebViewBridge.ctx = ctx.applicationContext
     }
 
     fun bindings(): Map<String, Any> = mapOf(
@@ -46,7 +48,11 @@ object LanJs {
 }
 
 /** 书源导入 / 聚合搜索 / 目录 / 正文（含漫画源） */
-class SourceRepository(private val db: AppDatabase, private val appCtx: Context? = null) {
+class SourceRepository(
+    private val db: AppDatabase,
+    private val appCtx: Context? = null,
+    private val rssRepo: io.lanread.app.source.RssRepository? = null
+) {
 
     private val sourceDao get() = db.sourceDao()
     private val bookDao get() = db.bookDao()
@@ -83,13 +89,19 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
                 return@withContext ImportResult(0, 0, "下载失败：${it.message}")
             }
         } else text
-        val list = BookSourceParser.parseText(body)
-        if (list.isEmpty()) {
-            return@withContext ImportResult(0, 0, "未解析到书源（内容格式不符）")
+        // v0.4.27：先按书源解析，空列表时再按订阅源解析（933/935 型源导入识别失败根因）
+        val bookList = BookSourceParser.parseText(body)
+        if (bookList.isEmpty()) {
+            val rssList = io.lanread.app.source.RssSourceParser.parseText(body)
+            if (rssList.isNotEmpty() && rssRepo != null) {
+                val rr = rssRepo.import(body)
+                return@withContext ImportResult(rr.added, rr.skipped, rr.error)
+            }
+            return@withContext ImportResult(0, 0, "未解析到书源或订阅源（内容格式不符）")
         }
         var added = 0
         var skipped = 0
-        for (s in list) {
+        for (s in bookList) {
             if (s.bookSourceUrl.isBlank() || s.bookSourceName.isBlank()) {
                 skipped++; continue
             }
@@ -474,17 +486,17 @@ class SourceRepository(private val db: AppDatabase, private val appCtx: Context?
         val bindings = jsLibBindings
         val partHtml: String?
         var nextPage: String? = null
-        if (rule.trim().startsWith("<js>")) {
-            partHtml = Analyzer.getString(rule, Analyzer.Ctx(""), vars, jsLib, bindings)
+        // v0.4.26：<js>/@js: 正文规则 result=原始 HTML 字符串（Legado 语义——8145 群小说
+        // qsContent(result) 用正则从 HTML 串提取；传 jsoup Document 会被 Rhino 拒绝
+        // String() 转换）。非 JS 规则（@css:/class.xxx）仍走 Element 上下文。
+        val body = runCatching { Http.get(currentUrl, srcHome, srcHeaders) }.getOrElse { "" }
+        val isJsRule = rule.trim().startsWith("<js>") || rule.trim().startsWith("@js:")
+        val ctx = if (isJsRule || body.trimStart().startsWith("{") || body.trimStart().startsWith("[")) {
+            Analyzer.Ctx(body)
         } else {
-            val body = runCatching { Http.get(currentUrl, srcHome, srcHeaders) }.getOrElse { "" }
-            val ctx = if (body.trimStart().startsWith("{") || body.trimStart().startsWith("[")) {
-                Analyzer.Ctx(body)
-            } else {
-                Analyzer.Ctx(Jsoup.parse(body, currentUrl))
-            }
-            partHtml = Analyzer.getString(rule, ctx, vars, jsLib, bindings)
+            Analyzer.Ctx(Jsoup.parse(body, currentUrl))
         }
+        partHtml = Analyzer.getString(rule, ctx, vars, jsLib, bindings)
         if (!nextRule.isNullOrBlank()) {
             // nextContentUrl 在当前页 body 上提取（文本/漫画通用），失败即无下一页
             nextPage = try {

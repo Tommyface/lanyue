@@ -11,6 +11,7 @@ import org.mozilla.javascript.ClassShutter
 import org.mozilla.javascript.Context
 import org.mozilla.javascript.Scriptable
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Legado 规则求值引擎（兼容子集）—— 书源 + 订阅源 + 漫画源共用。
@@ -159,6 +160,13 @@ object Analyzer {
         /** 设备标识（1336 合集里源拼签名用）——固定值，不暴露真机信息 */
         fun androidId(): String = "lanread0000device"
         fun deviceID(imei: String?): String = "86${(imei ?: "").hashCode().toLong().let { if (it < 0) -it else it }}"
+
+        /** v0.4.25：java.webView(html, url, script)——WebView 同步执行桥（8140 爱看吧型源：
+         * 在 WebView 里跑同步 XHR 取正文，script 完成值即结果）。Legado 同名 API 的等价实现。 */
+        fun webView(html: String?, url: String?, script: String?): String? {
+            if (html.isNullOrBlank() || script.isNullOrBlank()) return null
+            return WebViewBridge.run(html, url, script)
+        }
 
         /** v0.4.24：DESede（3DES）加密——245 集综合源的 token 签名 */
         fun tripleDESEncodeBase64(data: String?, key: String?): String? {
@@ -453,6 +461,57 @@ object Analyzer {
         }
     }
 
+    /**
+     * v0.4.25：WebView 同步执行桥（java.webView(html, url, script) 的等价实现）。
+     * 8140 爱看吧型源：在 WebView 里跑同步 XHR 取正文（script 完成值即结果）。
+     * 实现：JS 线程 post 到主线程 → WebView loadDataWithBaseURL + evaluateJavascript
+     * → CountDownLatch 等回调（IO 线程阻塞不卡主线程，无死锁）。
+     * 主线程隐藏 WebView 复用（WeakReference 防泄漏）。
+     */
+    object WebViewBridge {
+        @Volatile
+        var ctx: android.content.Context? = null
+
+        private val webViewRef = AtomicReference<java.lang.ref.WeakReference<android.webkit.WebView>?>(null)
+
+        fun run(html: String, url: String?, script: String): String? {
+            val c = ctx ?: return null
+            val latch = java.util.concurrent.CountDownLatch(1)
+            val resultRef = AtomicReference<String?>(null)
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    val wv = ensureWebView(c)
+                    wv.loadDataWithBaseURL(
+                        url?.takeIf { it.isNotBlank() } ?: "about:blank",
+                        html, "text/html", "utf-8", null
+                    )
+                    wv.evaluateJavascript(script) { value ->
+                        // evaluateJavascript 返回 JSON 字符串（"..."带引号）——剥引号
+                        resultRef.set(value?.removeSurrounding("\""))
+                        latch.countDown()
+                    }
+                } catch (e: Exception) {
+                    latch.countDown()
+                }
+            }
+            latch.await(15, java.util.concurrent.TimeUnit.SECONDS)
+            return resultRef.get()
+        }
+
+        private fun ensureWebView(c: android.content.Context): android.webkit.WebView {
+            webViewRef.get()?.get()?.let { if (it.context !== c) { /* 跨 Activity 复用降级为重建 */ } }
+            val existing = webViewRef.get()?.get()
+            if (existing != null) return existing
+            val wv = android.webkit.WebView(c)
+            wv.settings.javaScriptEnabled = true
+            wv.settings.domStorageEnabled = true
+            wv.isFocusable = false
+            wv.layoutParams = android.widget.FrameLayout.LayoutParams(1, 1)
+            webViewRef.set(java.lang.ref.WeakReference(wv))
+            return wv
+        }
+    }
+
     // ---------------- 列表规则（bookList / chapterList / ruleArticles） ----------------
 
     fun getItems(
@@ -510,8 +569,45 @@ object Analyzer {
                     }
                 }
                 r.startsWith("@css:") -> {
-                    val sel = r.removePrefix("@css:").substringBefore("@").trim()
-                    selectItems(body, baseUri, sel)
+                    // v0.4.25：<js> 后缀剥离——Legado 语义「@css:SEL<js>code</js>」=
+                    // CSS 选中元素集合 → JS 以 result=集合 过滤/转换（8140 爱看吧 chapterList：
+                    // 去重/过滤章节项）。旧版 sel 含 <js> 废串 → jsoup 0 命中 → 目录空 → 正文报错。
+                    var bodyRule = r.removePrefix("@css:")
+                    var jsSuffix: String? = null
+                    val jsIdx = bodyRule.indexOf("<js>")
+                    if (jsIdx > 0) {
+                        val jsEnd = bodyRule.indexOf("</js>", jsIdx)
+                        if (jsEnd > 0) {
+                            jsSuffix = bodyRule.substring(jsIdx + 4, jsEnd).trim()
+                            bodyRule = bodyRule.substring(0, jsIdx).trim()
+                        }
+                    }
+                    val sel = bodyRule.substringBefore("@").trim()
+                    if (jsSuffix == null) {
+                        selectItems(body, baseUri, sel)
+                    } else {
+                        val els = selectItems(body, baseUri, sel)
+                        if (els.isEmpty()) return emptyList()
+                        return try {
+                            val raw = evalJsRaw(jsSuffix, Ctx(els.map { it.value }.toList()), vars, jsLib, bindings)
+                            when (raw) {
+                                is List<*> -> raw.map { Ctx(it) }
+                                else -> {
+                                    val s = raw?.let { Context.toString(it) } ?: return emptyList()
+                                    if (s.isBlank()) emptyList()
+                                    else {
+                                        val v = readJson(Ctx(s), "$")?.value
+                                        when (v) {
+                                            is List<*> -> v.map { Ctx(it) }
+                                            else -> listOf(Ctx(s))
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            emptyList()
+                        }
+                    }
                 }
                 r.startsWith("$.") || r.startsWith("@json:") || r.startsWith("[") -> {
                     val path = if (r.startsWith("@json:")) r.removePrefix("@json:") else r
@@ -669,10 +765,28 @@ object Analyzer {
             r.startsWith("@css:") -> {
                 // v0.4.22：@css: 后是完整 CSS 选择器（nth-of-type/>/伪类等高级语法），
                 // 不能走 splitSelector 的 Legado token 切分（点号会把伪类/组合器拆烂）。
-                // 尾部 @attr 剥离（attrOf 语义），其余整串直接交 jsoup。
-                val body = r.removePrefix("@css:")
+                // v0.4.25：<js> 后缀剥离（字段规则 `@css:SEL<js>code</js>`——提取值作 result 传 JS）。
+                var bodyRule = r.removePrefix("@css:")
+                var jsSuffix: String? = null
+                val jsIdx = bodyRule.indexOf("<js>")
+                if (jsIdx > 0) {
+                    val jsEnd = bodyRule.indexOf("</js>", jsIdx)
+                    if (jsEnd > 0) {
+                        jsSuffix = bodyRule.substring(jsIdx + 4, jsEnd).trim()
+                        bodyRule = bodyRule.substring(0, jsIdx).trim()
+                    }
+                }
                 val root = ctx.asElement() ?: return null
-                selectByCss(root, body.substringBefore("@").trim(), null, attrOf(body))
+                val raw = selectByCss(root, bodyRule.substringBefore("@").trim(), null, attrOf(bodyRule))
+                if (jsSuffix == null) raw
+                else {
+                    if (raw.isNullOrBlank()) null
+                    else try {
+                        evalJs(jsSuffix, Ctx(raw), vars, jsLib, bindings)
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
             }
             else -> {
                 // 前导 @ 容错（v0.4.14）：Legado 规则 `@a@href` / `@span.-2@text`（yck 订阅源
@@ -919,6 +1033,10 @@ object Analyzer {
     private fun splitSelector(rule: String): Pair<String, Int?> {
         val r = rule.substringBefore("@").trim()
         if (r.contains(' ') || r.contains(':') || r.contains('[')) {
+            return r to null
+        }
+        // v0.4.27：# 开头是 id 选择器（`#ccontent@html`）——旧版按 class 拼成 .#ccontent 废串
+        if (r.startsWith("#")) {
             return r to null
         }
         val tokens = r.split('.').filter { it.isNotBlank() }

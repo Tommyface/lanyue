@@ -14,8 +14,8 @@ android {
         applicationId = "io.lanread.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 29
-        versionName = "0.4.24"
+        versionCode = 32
+        versionName = "0.4.27"
     }
 
     signingConfigs {

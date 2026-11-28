@@ -1,4 +1,4 @@
-# 澜阅 LanRead v0.4.24
+# 澜阅 LanRead v0.4.27
 
 开源安卓阅读器 · 自建骨架 + 兼容 Legado 书源生态（路线 B）
 
@@ -148,6 +148,15 @@
      - **searchUrl 搜索**：订阅源列表页搜索图标 → 输入关键词，按源 searchUrl 模板请求（注入 key/searchKey/sourceKey/page/baseUrl 变量，source 绑临时 variable 桥不污染全局存），933 型 `{{String(source.variable)}}` 与 yck 型 `{{key}}` 模板均兼容
      - **搜索翻页**：搜索结果沿用底部翻页递增 page；未配置 searchUrl 的源明确提示
      - 仓库重构：抽出 fetchAndBuild 公共链路（请求 + ruleArticles 解析 + 镜像降级重试 + working_host 回写），分组浏览与搜索共用
+     30. **导入分流 + #id 选择器修复（v0.4.27）**：
+      - **SourceRepository.import 订阅源分流**：书源页粘贴订阅源 JSON（933/935 型）此前只走 BookSourceParser → 空列表 →「未解析到书源」；现空列表时自动转 RssRepository.import 入库
+      - **splitSelector #id 支持**：#ccontent@html（8158 就爱文学）此前按 class 拼成 .#ccontent 废串 → 正文提取 null →「正文获取失败」；现 # 开头直接返回 id 选择器
+     30. **正文 result 双轨注入 + 视频 HLS 播放修复（v0.4.26）**：
+      - **fetchOnePage 双轨分流**：<js>/@js: 正文规则 result=原始 HTML 字符串（Legado 语义——8145 群小说 qsContent(result) 正则提取；旧版传 jsoup Document 被 Rhino 拒绝 String() 转换 / 传空串致「正文获取失败」）
+      - **VideoPlayerScreen HLS 修复**：m3u8/HLS 流包装 hls.js 播放器页（旧版直接 loadUrl 无法播放 HLS）
+     30. **正文链路修复 + WebView 桥（v0.4.25）**：
+      - **@css:SEL<js>code</js> 后缀剥离**（getItems/getString 双分支）——CSS 选中元素集合后 JS 以 result=集合 过滤/转换（8140 爱看吧 chapterList：旧版选择器含 <js> 废串 → 目录 0 项 → 正文报错）
+      - **java.webView(html, url, script)**：WebView 同步执行桥（主线程 post + CountDownLatch，8140 型源在 WebView 里跑同步 XHR 取正文的链路）
      30. **合集实测 API 补齐（v0.4.24）**：
       - **source.getKey()/source.key**：书源 URL 井号后备用地址（无忧书城/网书/夜寒族真实搜索域），searchOne 注入 bookSourceKey 变量
       - **java.get(url, options)**：返回 Response 包装（headers('Location') 重定向读取——无忧书城族）
