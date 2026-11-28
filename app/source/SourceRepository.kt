@@ -11,6 +11,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
@@ -146,6 +148,7 @@ class SourceRepository(
         val kind: String = ""           // 连载状态/分类（如 "连载中$$韩漫"，$$ 分隔）
     )
 
+    /** 一次性搜索（其他调用方用）：等全部完成返回 */
     suspend fun searchAll(keyword: String): List<SearchHit> = withContext(Dispatchers.IO) {
         appCtx?.let { LanJs.ensure(it) }
         val sources = sourceDao.enabled()
@@ -154,13 +157,49 @@ class SourceRepository(
             val notes = java.util.Collections.synchronizedList(ArrayList<String>())
             val hits = sources.map { se ->
                 async {
-                    // 单源限时：书源自带 JS 探测线路时避免弱网下长时间卡搜索
                     runCatching { withTimeoutOrNull(90_000L) { searchOne(se, keyword, notes) } }
                         .getOrElse { emptyList() } ?: emptyList()
                 }
             }.awaitAll().flatten()
             lastSearchNotes = notes.toList()
-            hits
+            sortByMatch(hits, keyword)
+        }
+    }
+
+    /** v0.4.30：流式搜索——每完成一源即推送累积结果，UI 渐进式显示（不等全部完成） */
+    fun searchAllFlow(keyword: String): Flow<List<SearchHit>> = channelFlow {
+        appCtx?.let { LanJs.ensure(it) }
+        val sources = sourceDao.enabled()
+        if (sources.isEmpty()) { send(emptyList()); return@channelFlow }
+        val notes = java.util.Collections.synchronizedList(ArrayList<String>())
+        val hits = mutableListOf<SearchHit>()
+        coroutineScope {
+            val deferreds = sources.map { se ->
+                async(Dispatchers.IO) {
+                    runCatching { withTimeoutOrNull(30_000L) { searchOne(se, keyword, notes) } }
+                        .getOrElse { emptyList() } ?: emptyList()
+                }
+            }
+            for (d in deferreds) {
+                hits.addAll(d.await())
+                send(hits.toList())
+            }
+        }
+        lastSearchNotes = notes.toList()
+        send(sortByMatch(hits, keyword))
+    }
+
+    /** 匹配度排序：完全匹配 > 前缀匹配 > 包含匹配 > 其他 */
+    private fun sortByMatch(hits: List<SearchHit>, keyword: String): List<SearchHit> {
+        val kw = keyword.trim()
+        if (kw.isEmpty()) return hits
+        return hits.sortedByDescending { hit ->
+            when {
+                hit.title == kw -> 4
+                hit.title.startsWith(kw) -> 3
+                hit.title.contains(kw) -> 2
+                else -> 1
+            }
         }
     }
 
@@ -489,24 +528,19 @@ class SourceRepository(
         // v0.4.26：<js>/@js: 正文规则 result=原始 HTML 字符串（Legado 语义——8145 群小说
         // qsContent(result) 用正则从 HTML 串提取；传 jsoup Document 会被 Rhino 拒绝
         // String() 转换）。非 JS 规则（@css:/class.xxx）仍走 Element 上下文。
+        // v0.4.28：每页只抓一次——旧版 nextContentUrl 提取时二次请求整页，弱网/反爬源
+        // 双倍流量易触发验证页导致翻页抓取中断；正文与翻页规则复用同一份 body。
         val body = runCatching { Http.get(currentUrl, srcHome, srcHeaders) }.getOrElse { "" }
         val isJsRule = rule.trim().startsWith("<js>") || rule.trim().startsWith("@js:")
-        val ctx = if (isJsRule || body.trimStart().startsWith("{") || body.trimStart().startsWith("[")) {
-            Analyzer.Ctx(body)
-        } else {
-            Analyzer.Ctx(Jsoup.parse(body, currentUrl))
-        }
+        val isJsonBody = body.trimStart().startsWith("{") || body.trimStart().startsWith("[")
+        val ctx = if (isJsRule || isJsonBody) Analyzer.Ctx(body) else Analyzer.Ctx(Jsoup.parse(body, currentUrl))
+        // nextContentUrl 规则的 ctx 口径与旧版一致（JSON body 走字符串，否则 jsoup Document）
+        val ctxNext = if (isJsonBody) Analyzer.Ctx(body) else Analyzer.Ctx(Jsoup.parse(body, currentUrl))
         partHtml = Analyzer.getString(rule, ctx, vars, jsLib, bindings)
         if (!nextRule.isNullOrBlank()) {
             // nextContentUrl 在当前页 body 上提取（文本/漫画通用），失败即无下一页
             nextPage = try {
-                val body2 = runCatching { Http.get(currentUrl, srcHome, srcHeaders) }.getOrElse { "" }
-                val ctx2 = if (body2.trimStart().startsWith("{") || body2.trimStart().startsWith("[")) {
-                    Analyzer.Ctx(body2)
-                } else {
-                    Analyzer.Ctx(Jsoup.parse(body2, currentUrl))
-                }
-                Analyzer.getString(nextRule, ctx2, vars, jsLib, bindings)?.trim()
+                Analyzer.getString(nextRule, ctxNext, vars, jsLib, bindings)?.trim()
             } catch (e: Exception) {
                 null
             }

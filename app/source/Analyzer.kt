@@ -168,6 +168,18 @@ object Analyzer {
             return WebViewBridge.run(html, url, script)
         }
 
+        /** v0.4.30：java.openUrl(url)——书山聚合等源搜索时后台弹窗加载页面取结果：
+         * Legado 同名 API（打开 URL 返回页面 HTML）。与 ajax 区别：openUrl 语义为"打开页面"，
+         * 书源脚本据此判断页面内容再提取搜索结果。 */
+        fun openUrl(url: String?): String? {
+            if (url.isNullOrBlank()) return null
+            return try {
+                Http.get(url, null, null)
+            } catch (e: Exception) {
+                null
+            }
+        }
+
         /** v0.4.24：DESede（3DES）加密——245 集综合源的 token 签名 */
         fun tripleDESEncodeBase64(data: String?, key: String?): String? {
             if (data == null || key == null) return null

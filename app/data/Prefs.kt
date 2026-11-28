@@ -26,6 +26,22 @@ object Prefs {
         prefs(context).edit().putInt("readerTheme", v).apply()
     }
 
+    // 0=左右翻页（分页+点击翻页） 1=上下滚动（全文字连续滚动）
+    fun pageMode(context: Context): Int =
+        prefs(context).getInt("pageMode", 0)
+
+    fun setPageMode(context: Context, v: Int) {
+        prefs(context).edit().putInt("pageMode", v).apply()
+    }
+
+    // 订阅源默认显示源 ID（0=未设置，自动选第一个）
+    fun rssDefaultSourceId(context: Context): Long =
+        prefs(context).getLong("rssDefaultSourceId", 0L)
+
+    fun setRssDefaultSourceId(context: Context, v: Long) {
+        prefs(context).edit().putLong("rssDefaultSourceId", v).apply()
+    }
+
     // ---------- WebDAV（明文存于应用私有目录，见 README 安全说明） ----------
     fun webdavUrl(context: Context): String =
         prefs(context).getString("webdavUrl", "") ?: ""

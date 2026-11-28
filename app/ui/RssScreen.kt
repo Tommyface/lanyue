@@ -63,6 +63,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavController
 import io.lanread.app.data.AppDatabase
+import io.lanread.app.data.Prefs
 import io.lanread.app.source.LanJs
 import io.lanread.app.source.RssRepository
 import io.lanread.app.source.RssSourceParser
@@ -82,7 +83,7 @@ class RssViewModel(app: android.app.Application) : AndroidViewModel(app) {
     val sources = repo.sourcesFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    var activeSourceId by mutableStateOf<Long?>(null)
+    var activeSourceId by mutableStateOf(Prefs.rssDefaultSourceId(app).takeIf { it > 0 })
         private set
     var groupIndex by mutableStateOf(0)
         private set
@@ -134,6 +135,7 @@ class RssViewModel(app: android.app.Application) : AndroidViewModel(app) {
 
     fun selectSource(id: Long?) {
         activeSourceId = id
+        Prefs.setRssDefaultSourceId(getApplication(), id ?: 0)
         groupIndex = 0
         page = 1
         articles = emptyList()
@@ -252,7 +254,10 @@ fun RssScreen(nav: NavController) {
     val list = sources
     LaunchedEffect(list) {
         if (vm.activeSourceId == null && !list.isNullOrEmpty()) {
-            vm.selectSource(list.first().id)
+            // 优先选持久化的默认源，不存在则选第一个
+            val persisted = Prefs.rssDefaultSourceId(app)
+            val target = list.firstOrNull { it.id == persisted } ?: list.first()
+            vm.selectSource(target.id)
         }
     }
 

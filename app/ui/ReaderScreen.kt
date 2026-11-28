@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
@@ -169,10 +171,19 @@ class ReaderViewModel(app: android.app.Application) : AndroidViewModel(app) {
     var imageUrls by mutableStateOf<List<String>>(emptyList())
         private set
 
+    /** v0.4.30：连续阅读——目录列表 + 当前章节索引 + 章节标题 */
+    var chapters by mutableStateOf<List<SourceRepository.Chapter>>(emptyList())
+        private set
+    var currentChapter by mutableStateOf(0)
+        private set
+    var currentChapterTitle by mutableStateOf("")
+        private set
+
     fun load(bookId: Long, chapter: Int, url: String) {
         viewModelScope.launch {
             loading = true
             error = null
+            currentChapter = chapter
             try {
                 val b = bookDao.byId(bookId)
                 book = b
@@ -198,6 +209,45 @@ class ReaderViewModel(app: android.app.Application) : AndroidViewModel(app) {
                 if (b.type == 2 && content.contains("<img")) {
                     imageUrls = withContext(Dispatchers.IO) {
                         repo.decryptImages(b.sourceId, content)
+                    }
+                }
+                // v0.4.30：异步加载目录用于连续阅读
+                if (b.type != 0) loadTocAsync(b)
+            } catch (e: Exception) {
+                error = "加载失败：${e.message}"
+            }
+            loading = false
+        }
+    }
+
+    /** v0.4.30：异步加载目录（不阻塞正文显示） */
+    private fun loadTocAsync(b: BookEntity) {
+        viewModelScope.launch {
+            try {
+                val info = repo.bookInfo(b.sourceId, b.uri)
+                val tocUrl = info?.tocUrl ?: b.uri
+                chapters = repo.toc(b.sourceId, tocUrl)
+                currentChapterTitle = chapters.getOrNull(currentChapter)?.title ?: ""
+            } catch (_: Exception) {}
+        }
+    }
+
+    /** v0.4.30：连续阅读——加载下一章 */
+    fun loadNextChapter() {
+        val nextIdx = currentChapter + 1
+        if (nextIdx >= chapters.size) return
+        val next = chapters[nextIdx]
+        currentChapter = nextIdx
+        loading = true  // 立即显示加载态（不等 launch）
+        error = null
+        viewModelScope.launch {
+            try {
+                content = repo.content(book?.sourceId ?: 0, next.url)
+                currentChapterTitle = next.title
+                if (content.isBlank()) error = "正文为空：书源规则未能提取内容"
+                if (book?.type == 2 && content.contains("<img")) {
+                    imageUrls = withContext(Dispatchers.IO) {
+                        repo.decryptImages(book?.sourceId ?: 0, content)
                     }
                 }
             } catch (e: Exception) {
@@ -234,11 +284,14 @@ fun ReaderScreen(
 
     var fontSize by remember { mutableStateOf(Prefs.fontSize(context)) }
     var themeIndex by remember { mutableStateOf(Prefs.readerTheme(context)) }
+    var pageMode by remember { mutableStateOf(Prefs.pageMode(context)) }  // 0=左右翻页 1=上下滚动
     var menuOpen by remember { mutableStateOf(false) }
     var page by remember { mutableStateOf(0) }
     var restored by remember { mutableStateOf(false) }
+    var reachedEnd by remember { mutableStateOf(false) }  // v0.4.30：到达末页标志（连续阅读用）
     var ttsMsg by remember { mutableStateOf<String?>(null) }
     val isComic = vm.book?.type == 2
+    val isVertical = !isComic && pageMode == 1  // 上下滚动模式
 
     val theme = ReaderThemes[themeIndex.coerceIn(0, ReaderThemes.size - 1)]
 
@@ -281,22 +334,33 @@ fun ReaderScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .background(theme.bg)
-                .pointerInput(vm.content, isComic) {
-                    detectTapGestures { offset ->
-                        val w = size.width
-                        when {
-                            isComic -> menuOpen = !menuOpen
-                            offset.x < w / 3f -> {
-                                ttsHolder.stop()
-                                if (page > 0) page--
+                .pointerInput(vm.content, isComic, pageMode) {
+                    detectTapGestures(
+                        onDoubleTap = {
+                            // v0.4.29：双击正文弹出设置菜单
+                            if (!isComic) menuOpen = !menuOpen
+                        },
+                        onTap = { offset ->
+                            val w = size.width
+                            when {
+                                isComic -> menuOpen = !menuOpen
+                                isVertical -> { /* 上下滚动模式：单击不翻页，滚动即阅读 */ }
+                                offset.x < w / 3f -> {
+                                    ttsHolder.stop()
+                                    if (page > 0) page--
+                                }
+                                offset.x > w * 2f / 3f -> {
+                                    ttsHolder.stop()
+                                    if (!reachedEnd) {
+                                        page++
+                                    } else {
+                                        // v0.4.30：翻到末页再翻 → 自动加载下一章
+                                        vm.loadNextChapter()
+                                    }
+                                }
                             }
-                            offset.x > w * 2f / 3f -> {
-                                ttsHolder.stop()
-                                page++
-                            }
-                            else -> menuOpen = !menuOpen
                         }
-                    }
+                    )
                 }
         ) {
             val density = LocalDensity.current
@@ -310,16 +374,34 @@ fun ReaderScreen(
                     typeface = Typeface.DEFAULT
                 }
             }
-            val pages = remember(vm.content, fontSize, widthPx, heightPx) {
-                Paginator.paginate(vm.content, widthPx, heightPx, paint, 1.6f)
+            // v0.4.28：正文净化——书源正文常带 <p>/<br> HTML 标签（截图实锤裸露显示）。
+            // 非漫画源在分页前净化成纯文本+换行（漫画源保留 <img> HTML 走图片渲染）。
+            val displayContent = if (isComic) vm.content else sanitizeHtml(vm.content)
+            // v0.4.29：上下滚动模式不分页，直接全文字滚动；左右翻页模式保留 Paginator 分页
+            val pages = if (!isVertical && !isComic) {
+                remember(displayContent, fontSize, widthPx, heightPx) {
+                    Paginator.paginate(displayContent, widthPx, heightPx, paint, 1.6f)
+                }
+            } else emptyList()
+
+            // v0.4.30：检测到达末页（连续阅读触发条件）
+            LaunchedEffect(page, pages.size) {
+                reachedEnd = !isVertical && !isComic && pages.isNotEmpty() && page >= pages.size - 1
             }
 
             fun pageTextAt(i: Int): String {
                 if (pages.isEmpty()) return ""
                 val idx = i.coerceIn(0, pages.size - 1)
-                return vm.content.substring(pages[idx].start, pages[idx].end)
+                // v0.4.28：分页基于 displayContent（净化后），取页必须同源，否则净化后长度错位
+                return displayContent.substring(pages[idx].start, pages[idx].end)
             }
 
+            // v0.4.30：章节切换时重置到第一页 + 重置末页标志
+            LaunchedEffect(vm.currentChapter) {
+                page = 0
+                restored = false
+                reachedEnd = false
+            }
             // 首次加载恢复页级进度（漫画无页级进度）
             LaunchedEffect(vm.content) {
                 if (vm.content.isNotBlank() && !restored) {
@@ -337,9 +419,11 @@ fun ReaderScreen(
                 }
             }
 
-            // TTS：本页读完自动续读下一页
+            // TTS：水平模式本页读完自动续读下一页；垂直模式全文读完即停
             ttsHolder.onPageDone = {
-                if (page < pages.size - 1) {
+                if (isVertical) {
+                    ttsHolder.listening = false
+                } else if (page < pages.size - 1) {
                     page += 1
                     ttsHolder.speak(pageTextAt(page))
                 } else {
@@ -370,6 +454,18 @@ fun ReaderScreen(
                     modifier = Modifier.fillMaxSize(),
                     onVideo = { url -> nav.navigate(Routes.video(url, vm.book?.title ?: "")) }
                 )
+            } else if (isVertical) {
+                // v0.4.29：上下滚动模式——全文字连续滚动，自动换行由 Text 渲染保证
+                Text(
+                    displayContent,
+                    color = theme.text,
+                    fontSize = fontSize.sp,
+                    lineHeight = (fontSize * 1.6f).sp,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                )
             } else {
                 Text(
                     pageTextAt(page),
@@ -380,15 +476,30 @@ fun ReaderScreen(
                         .fillMaxSize()
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                 )
-                Text(
-                    "${page.coerceIn(0, (pages.size - 1).coerceAtLeast(0)) + 1} / ${pages.size}",
-                    color = theme.dim,
-                    fontSize = 11.sp,
-                    fontFamily = LanType.Folio,
+                Column(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(12.dp)
-                )
+                ) {
+                    if (vm.currentChapterTitle.isNotBlank()) {
+                        Text(
+                            vm.currentChapterTitle,
+                            color = theme.dim,
+                            fontSize = 10.sp,
+                            fontFamily = LanType.Folio,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(2.dp))
+                    }
+                    Text(
+                        "${page.coerceIn(0, (pages.size - 1).coerceAtLeast(0)) + 1} / ${pages.size}",
+                        color = theme.dim,
+                        fontSize = 11.sp,
+                        fontFamily = LanType.Folio
+                    )
+                }
             }
 
             ttsMsg?.let {
@@ -414,11 +525,16 @@ fun ReaderScreen(
                         themeIndex = i
                         Prefs.setReaderTheme(context, i)
                     },
+                    pageMode = pageMode,
+                    onPageMode = { v ->
+                        pageMode = v
+                        Prefs.setPageMode(context, v)
+                    },
                     showTts = !isComic,
                     listening = ttsHolder.listening,
                     onPlay = {
                         ttsMsg = null
-                        ttsHolder.speak(pageTextAt(page))
+                        ttsHolder.speak(if (isVertical) displayContent else pageTextAt(page))
                     },
                     onStop = { ttsHolder.stop() },
                     onClose = { menuOpen = false },
@@ -431,12 +547,49 @@ fun ReaderScreen(
     }
 }
 
+/**
+ * v0.4.28：正文 HTML 净化——书源正文常带 <p>/<br> 等标签（截图实锤裸露显示）。
+ * 块级标签转换行、剥其余标签、解码常见 HTML 实体，输出纯文本供 Paginator 分页与 Text 渲染。
+ * 参照 Legado ContentProcessor 的 replaceContent 净化语义（块级标签→\n）。
+ */
+private fun sanitizeHtml(html: String): String {
+    if (html.isBlank()) return html
+    var s = html
+    // <br> 与块级闭合/开标签 → 换行
+    s = s.replace(Regex("(?i)\\s*<\\s*br\\s*/?\\s*>"), "\n")
+    s = s.replace(Regex("(?i)<\\s*/\\s*(p|div|section|article|li|h[1-6]|blockquote|tr|td|th)\\s*>"), "\n")
+    s = s.replace(Regex("(?i)<\\s*(p|div|section|article|li|h[1-6]|blockquote|tr|td|th)\\b[^>]*>"), "\n")
+    // 剥其余标签
+    s = s.replace(Regex("<[^>]+>"), "")
+    // 常见 HTML 实体解码
+    s = s.replace("&nbsp;", " ")
+        .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+        .replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'")
+        .replace("&hellip;", "…").replace("&mdash;", "—").replace("&ndash;", "–")
+        .replace("&ldquo;", "\u201C").replace("&rdquo;", "\u201D")
+        .replace("&lsquo;", "\u2018").replace("&rsquo;", "\u2019")
+    s = s.replace(Regex("&#(\\d+);")) { mr ->
+        val code = mr.groupValues[1].toIntOrNull() ?: return@replace ""
+        if (code in 0x20..0x10FFFF) code.toChar().toString() else ""
+    }
+    s = s.replace(Regex("&[a-zA-Z]+;"), "") // 未识别实体剥掉，避免残留 &xxx;
+    // 压缩 3+ 连续空行为段间距
+    s = s.replace(Regex("\n{3,}"), "\n\n")
+    // v0.4.30：段落首行缩进（中文排版习惯）——每段首行加两个全角空格
+    s = s.split("\n").joinToString("\n") { para ->
+        if (para.isBlank()) para else "\u3000\u3000" + para.trimStart()
+    }
+    return s.trim()
+}
+
 @Composable
 private fun ReaderMenu(
     fontSize: Int,
     onFontSize: (Int) -> Unit,
     themeIndex: Int,
     onTheme: (Int) -> Unit,
+    pageMode: Int,
+    onPageMode: (Int) -> Unit,
     showTts: Boolean,
     listening: Boolean,
     onPlay: () -> Unit,
@@ -493,6 +646,27 @@ private fun ReaderMenu(
                     }
                 }
             }
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("翻页方式", fontSize = 13.sp)
+                Spacer(Modifier.weight(1f))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(0 to "左右翻页", 1 to "上下滚动").forEach { (mode, label) ->
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = if (pageMode == mode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.clickable { onPageMode(mode) }
+                        ) {
+                            Text(
+                                label,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                color = if (pageMode == mode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
             Spacer(Modifier.height(8.dp))
             if (showTts) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -509,10 +683,11 @@ private fun ReaderMenu(
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                if (showTts)
-                    "左 1/3 屏上一页｜右 1/3 屏下一页｜中间：菜单\n听书从当前页开始，本页读完自动续读下一页"
-                else
-                    "漫画：上下滚动阅读，点击屏幕呼出菜单",
+                when {
+                    !showTts -> "漫画：上下滚动阅读，双击弹出菜单"
+                    pageMode == 0 -> "左右翻页：左 1/3 上一页｜右 1/3 下一页｜双击弹出设置"
+                    else -> "上下滚动：滑动阅读，双击弹出设置"
+                },
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

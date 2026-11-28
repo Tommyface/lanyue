@@ -86,10 +86,13 @@ class SearchViewModel(app: android.app.Application) : AndroidViewModel(app) {
         results = emptyList()
         job = viewModelScope.launch {
             try {
-                val hits = repo.searchAll(keyword)
-                results = hits
+                var lastHits = emptyList<SourceRepository.SearchHit>()
+                repo.searchAllFlow(keyword).collect { hits ->
+                    lastHits = hits
+                    results = hits
+                }
                 searching = false
-                if (hits.isEmpty()) {
+                if (lastHits.isEmpty()) {
                     // v0.4.22：逐源失败原因透出（旧版一句「全部失败」无法诊断哪个源为什么挂）
                     val notes = repo.lastSearchNotes
                     message = if (notes.isNotEmpty()) {
@@ -176,7 +179,7 @@ fun SearchScreen(nav: NavController) {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "启用书源 ${vm.sourcesCount} 条 · ${if (vm.searching) "搜索中..." else "结果 ${vm.results.size} 条"}",
+                "启用书源 ${vm.sourcesCount} 条 · ${if (vm.searching) "搜索中… 已出 ${vm.results.size} 条" else "结果 ${vm.results.size} 条（按匹配度排序）"}",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

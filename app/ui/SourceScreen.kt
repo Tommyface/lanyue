@@ -116,10 +116,23 @@ class SourceViewModel(app: android.app.Application) : AndroidViewModel(app) {
                 actionMessage = "书源解析失败"
                 return@launch
             }
+            Analyzer.lastJsError = null
             val ret = Analyzer.runJs(action, emptyMap(), bs.loginUrl ?: "", io.lanread.app.source.LanJs.bindings())
             actionMessage = when {
-                ret.isNullOrBlank() -> "已执行（脚本无返回值）"
-                else -> "返回：$ret"
+                ret.isNullOrBlank() -> {
+                    val err = Analyzer.lastJsError
+                    if (err != null && err != "完成值为 null（无异常抛出）") {
+                        "脚本错误：$err"
+                    } else {
+                        val vars = io.lanread.app.source.LanJs.java.all()
+                        if (vars.isNotEmpty()) {
+                            "已执行（脚本无返回值，但设置了变量：${vars.entries.joinToString(", ") { "${it.key}=${it.value}" }}）"
+                        } else {
+                            "已执行（脚本无返回值）"
+                        }
+                    }
+                }
+                else -> "返回：${ret.take(200)}"
             }
             refreshVars()
         }
